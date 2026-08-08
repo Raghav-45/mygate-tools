@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=440, initial-scale=1.0" />
+    <title>MyGate Dump Tool</title>
+    <link rel="stylesheet" href="popup.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div class="top-accent-bar"></div>
+
+    <main class="app-wrapper">
+      <!-- Official Branding Header -->
+      <header class="brand-header">
+        <button
+          type="button"
+          class="btn-about-icon"
+          id="aboutIconBtn"
+          title="About & Credits"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <circle cx="12" cy="12" r="10"></circle>
+            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+          </svg>
+        </button>
+        <div class="logo-wrap">
+          <svg
+            width="140"
+            height="36"
+            viewBox="0 0 210 52"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <!-- Official MyGate Building Grid Glyph -->
+            <path
+              d="M12 8H26C27.6569 8 29 9.34315 29 11V22C29 23.6569 27.6569 25 26 25H12C10.3431 25 9 23.6569 9 22V11C9 9.34315 10.3431 8 12 8Z"
+              fill="#1A1A1A"
+            />
+            <path d="M14 13H24V20H14V13Z" fill="#FFFFFF" />
+            <path
+              d="M34 8H44C45.6569 8 47 9.34315 47 11V16C47 17.6569 45.6569 19 44 19H34C32.3431 19 31 17.6569 31 16V11C31 9.34315 32.3431 8 34 8Z"
+              fill="#1A1A1A"
+            />
+            <path
+              d="M9 29H19C20.6569 29 22 30.3431 22 32V42C22 43.6569 20.6569 45 19 45H9C7.34315 45 6 43.6569 6 42V32C6 30.3431 7.34315 29 9 29Z"
+              fill="#1A1A1A"
+            />
+            <path d="M11 34H17V40H11V34Z" fill="#FFFFFF" />
+            <path
+              d="M26 29H34C35.6569 29 37 30.3431 37 32V45H29V37H26V29Z"
+              fill="#1A1A1A"
+            />
+            <path d="M41 24H47V45H41V24Z" fill="#1A1A1A" />
+            <text
+              x="56"
+              y="36"
+              fill="#1A1A1A"
+              font-family="'Inter', sans-serif"
+              font-weight="800"
+              font-size="32"
+              letter-spacing="-1.2"
+            >
+              mygate
+            </text>
+          </svg>
+        </div>
+        <div class="header-titles">
+          <h2>Multi-Year Ticket Dump</h2>
+          <p class="subtitle">Bypasses 1-Year Limit & Auto-Merges</p>
+        </div>
+      </header>
+
+      <!-- Main Form Configuration Card -->
+      <section class="card main-form-card">
+        <!-- Date Pickers Grid -->
+        <div class="dates-grid">
+          <div class="notched-input-group">
+            <label class="notched-label" for="fromDate">Dump From *</label>
+            <input type="date" id="fromDate" class="notched-input" />
+          </div>
+          <div class="notched-input-group">
+            <label class="notched-label" for="toDate">Dump Till *</label>
+            <input type="date" id="toDate" class="notched-input" />
+          </div>
+        </div>
+
+        <div
+          style="
+            font-size: 12px;
+            color: #64748b;
+            margin-top: -6px;
+            margin-bottom: 14px;
+            text-align: center;
+          "
+        >
+          ⚡ Select any multi-year range (e.g. 2024 to 2026). The tool slices &
+          merges it automatically!
+        </div>
+
+        <!-- Scan Speed Settings Drawer (Hidden by default) -->
+        <div class="settings-drawer hidden" id="settingsCollapse">
+          <div class="drawer-header">
+            <h4>⚙️ API Polling Speed</h4>
+            <span class="badge-opt">Optional</span>
+          </div>
+          <div class="delay-group">
+            <div class="delay-lbl-row">
+              <label for="requestDelayInput">Delay Between Cloud Queries</label>
+              <span class="delay-val" id="delayValText">2.0s</span>
+            </div>
+            <input
+              type="range"
+              id="requestDelayInput"
+              class="custom-range"
+              min="1.0"
+              max="5.0"
+              step="0.5"
+              value="2.0"
+            />
+            <span class="helper-text"
+              >Interval for checking if MyGate cloud generated your chunk</span
+            >
+          </div>
+        </div>
+
+        <!-- Primary Generate Button (Authentic MyGate Golden Yellow) -->
+        <div class="action-btn-wrap">
+          <button type="button" class="btn-primary-yellow" id="generateBtn">
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+            </svg>
+            Generate Master Dump
+          </button>
+          <button type="button" class="btn-abort hidden" id="abortBtn">
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+            </svg>
+            Stop Live Export
+          </button>
+        </div>
+
+        <!-- Footer Navigation Links -->
+        <div class="card-footer-links">
+          <button type="button" class="btn-text-link" id="settingsToggleBtn">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <circle cx="12" cy="12" r="3"></circle>
+              <path
+                d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l-.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+              ></path>
+            </svg>
+            Polling Speed
+          </button>
+          <a
+            href="https://dashboard.mygate.com/home/society/generatedReports"
+            target="_blank"
+            class="btn-text-link"
+          >
+            Cloud Reports &rarr;
+          </a>
+        </div>
+      </section>
+
+      <!-- Alert Banner -->
+      <div class="alert-box hidden" id="alertBanner"></div>
+
+      <!-- Live Progress Section -->
+      <section class="card progress-card hidden" id="progressContainer">
+        <div class="progress-meta">
+          <div class="live-indicator">
+            <span class="ping-dot"></span>
+            <span class="live-txt" id="progressStepText"
+              >Initiating dump chunks...</span
+            >
+          </div>
+          <span class="pct-num" id="progressPctText">0%</span>
+        </div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="progressFill"></div>
+        </div>
+      </section>
+
+      <!-- Results Display Section -->
+      <section class="results-wrapper hidden" id="resultsSection">
+        <!-- KPI Metric Cards Grid -->
+        <div class="kpi-grid">
+          <div class="kpi-card kpi-total">
+            <span class="kpi-val" id="kpiChunks">0 / 0</span>
+            <span class="kpi-lbl">Yearly Chunks</span>
+          </div>
+          <div class="kpi-card kpi-resolved">
+            <span class="kpi-val" id="kpiRows">0</span>
+            <span class="kpi-lbl">Total Merged Rows</span>
+          </div>
+          <div class="kpi-card kpi-open">
+            <span class="kpi-val" id="kpiStatus">Active</span>
+            <span class="kpi-lbl">Status</span>
+          </div>
+        </div>
+
+        <!-- Data Table Card -->
+        <div class="card table-card">
+          <div class="table-scroll" style="max-height: 180px">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="col-cat">Chunk Date Range</th>
+                  <th class="col-num">Rows Found</th>
+                  <th class="col-num">Status</th>
+                </tr>
+              </thead>
+              <tbody id="tableBody">
+                <!-- Rendered via JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Auto Download Status Box -->
+        <div
+          class="auto-dl-banner hidden"
+          id="autoDlBanner"
+          style="
+            margin-top: 14px;
+            background: #ecfdf5;
+            border: 1.5px solid #10b981;
+            color: #065f46;
+            padding: 14px;
+            border-radius: 12px;
+            text-align: center;
+            font-size: 13px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+          "
+        >
+          <span>🎉 Master Dump Excel Downloaded Automatically!</span>
+        </div>
+      </section>
+
+      <!-- About Modal Overlay -->
+      <div class="modal-overlay hidden" id="aboutModal">
+        <div class="about-modal-box">
+          <button type="button" class="modal-close" id="closeModalBtn">
+            &times;
+          </button>
+          <div class="author-avatar">
+            <img
+              src="https://github.com/raghav-45.png?size=160"
+              alt="Aditya Singh Khichi"
+            />
+          </div>
+          <h3 class="author-name">Aditya Singh Khichi</h3>
+          <span class="author-tag">Full Stack Engineer & AI Engineer</span>
+          <p class="author-desc">
+            Crafted with ❤️ to make daily tasks effortless ⚡
+          </p>
+          <div class="author-links-row">
+            <a
+              href="https://github.com/raghav-45"
+              target="_blank"
+              class="author-btn btn-gh"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+              >
+                <path
+                  d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"
+                />
+              </svg>
+              raghav-45
+            </a>
+            <a
+              href="https://aditya.is-a.dev"
+              target="_blank"
+              class="author-btn btn-web"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="2" y1="12" x2="22" y2="12"></line>
+                <path
+                  d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"
+                ></path>
+              </svg>
+              aditya.is-a.dev
+            </a>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="exceljs.min.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

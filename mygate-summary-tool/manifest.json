@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "MyGate Summary Tool",
+  "version": "1.0.0",
+  "description": "Automated Complaint Summary Sheet Automation for MyGate Admin Dashboard.",
+  "permissions": ["storage", "cookies", "scripting", "activeTab", "downloads"],
+  "host_permissions": ["https://*.mygate.com/*"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "MyGate Summary Tool",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
