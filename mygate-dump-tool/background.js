@@ -358,7 +358,7 @@ async function runMasterDumpExport(params) {
   const blueFill = {
     type: 'pattern',
     pattern: 'solid',
-    fgColor: { argb: 'FF8DB4E2' },
+    fgColor: { argb: 'FF4D93D9' },
   }
   const titleFont = {
     name: 'Aptos',
