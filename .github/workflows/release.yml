@@ -1,0 +1,80 @@
+name: Manual Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version / tag (e.g. 1.0.0)'
+        required: true
+        type: string
+        default: '1.0.0'
+      release_notes:
+        description: 'Release notes'
+        required: false
+        type: string
+        default: ''
+      pre_release:
+        description: 'Mark this as a pre-release'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Build extension zips
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          TOOLS=(
+            "mygate-dump-tool"
+            "mygate-report-tool"
+            "mygate-summary-tool"
+          )
+
+          for tool in "${TOOLS[@]}"; do
+            # Create a clean staging copy of each tool folder
+            rm -rf "dist/$tool"
+            cp -r "$tool" "dist/$tool"
+
+            # Remove files that must not ship as release assets
+            find "dist/$tool" -name '.gitignore' -delete
+            find "dist/$tool" -name 'KNOWN_ISSUES.md' -delete
+            find "dist/$tool" -name '*.zip' -delete
+            find "dist/$tool" -name '*.crx' -delete
+            find "dist/$tool" -name '*.pem' -delete
+
+            # Zip the folder contents so the extension root is the zip root
+            (cd "dist/$tool" && zip -r "../${tool}.zip" .)
+
+            rm -rf "dist/$tool"
+            echo "Built: dist/${tool}.zip"
+          done
+
+          ls -la dist/
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: v${{ inputs.version }}
+          body: ${{ inputs.release_notes }}
+          prerelease: ${{ inputs.pre_release }}
+          files: |
+            dist/mygate-dump-tool.zip
+            dist/mygate-report-tool.zip
+            dist/mygate-summary-tool.zip
