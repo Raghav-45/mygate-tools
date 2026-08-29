@@ -1,0 +1,41 @@
+import { crx } from '@crxjs/vite-plugin'
+import react from '@vitejs/plugin-react'
+import { defineConfig } from 'vite'
+
+export const manifest = {
+  manifest_version: 3,
+  name: 'MyGate Report Tool',
+  version: '2.2.0',
+  description: 'Generate pending MyGate tickets report directly from MyGate Dashboard GraphQL API.',
+  permissions: ['downloads', 'storage', 'activeTab', 'cookies', 'scripting', 'tabs'],
+  host_permissions: [
+    'https://api.dashboard.mygate.com/*',
+    'https://dashboard.mygate.com/*',
+    '*://*.mygate.com/*',
+  ],
+  action: {
+    default_popup: 'index.html',
+    default_title: 'MyGate Report Tool',
+    default_icon: {
+      16: 'icons/icon16.png',
+      48: 'icons/icon48.png',
+      128: 'icons/icon128.png',
+    },
+  },
+  icons: {
+    16: 'icons/icon16.png',
+    48: 'icons/icon48.png',
+    128: 'icons/icon128.png',
+  },
+  background: {
+    service_worker: 'src/background/index.ts',
+    type: 'module',
+  },
+}
+
+export default defineConfig({
+  plugins: [react(), crx({ manifest })],
+  build: {
+    sourcemap: false,
+  },
+})

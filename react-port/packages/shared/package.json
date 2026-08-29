@@ -1,0 +1,30 @@
+{
+  "name": "@mygate/shared",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Shared code for the MyGate React extensions: GraphQL client, Excel/xlsx helpers, chrome wrappers, date utils, and UI primitives.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.2.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "typescript": "~5.8.3",
+    "vitest": "^3.2.4"
+  }
+}
