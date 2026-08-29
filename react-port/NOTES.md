@@ -271,6 +271,10 @@ ported faithfully, bug included.
    count requests (the `break`s after each sleep), the loop exits and `if (!activeScanAbort)`
    means the finished block is skipped with no state flush and no `SCAN_ABORTED` — the popup
    keeps showing "Stopping..." until it is closed. Ported verbatim (tested).
+10. **summary-tool mid-day abort is silent (same family as §5.9).** After each daily count the
+    loop `return`s without flushing `summaryScanState` or sending `SUMMARY_ABORTED`, so the
+    popup stays stuck on the last "Processing …" state; only the top-of-loop abort flush
+    (`{isScanning:false,isAborted:true}` + `SUMMARY_ABORTED`) is wired. Ported verbatim (tested).
 
 ## 6. Things I deliberately did NOT do
 
@@ -343,3 +347,45 @@ ported faithfully, bug included.
     existing text) so report can pass its own "Excel File Downloaded Automatically!". The test
     chrome stub also grew a `setResponse(type, value)` hook (used to seed
     `GET_CATEGORIES_LIST`).
+- **Milestone 5 — summary-tool ported + tested.** Everything in §1.3 is now implemented in
+  `apps/summary-tool` (`src/summary/{summaryState,countQueries,runSummaryScan,
+  summaryWorkbook}.ts`, `src/background/index.ts`, `src/popup/App.tsx`) with 32 Vitest tests
+  (count conditions, workbook incl. the formula Pending cell, the full month loop incl. every
+  abort/token path, and the popup). Ported-decision notes:
+  - `countQueries.ts` reproduces the summary **own** condition shape: keys `name`/`values`
+    arrays, operations `equal`/`gte`/`lte`/`in`, epoch **seconds** via a local
+    `epochDDMMYYYY` (shared `getMidnightEpoch` takes `YYYY-MM-DD`, not the summary's
+    `dd-mm-yyyy`). `authorization` is always attached and, unlike report-tool, no cookies are
+    sent (`credentials: 'same-origin'`); non-2xx → `HTTP <status>` (keeps the status, no
+    re-login text), GraphQL errors/missing `getAdminSrList` → session-expired message, missing
+    `totalCount` → 0.
+  - `runSummaryScan.ts` takes an injectable `SummaryScanDeps` (`discoverToken` resolving
+    null + throwing `getToken`, count, sleep, storage, messaging, downloadWorkbook,
+    abortState). Per day: `prevOpen` counts BASE_PREV_DATE `01-01-2024`→day, `received`
+    day→day (all six statuses), `closed` day→day (closed only); `pending = prevOpen +
+    received - closed`; sleep `Math.round(delaySec*1000)` after each of the 3 counts (default
+    delay 1.5 s, matching the worker fallback `req.requestDelay || 1.5`); two `SUMMARY_PROGRESS`
+    messages per day (Processing + Completed carrying the row); month end clamped to `now` at
+    23:59:59.999; `SUMMARY_DONE` after the download. Storage key `summaryScanState`.
+  - Quirks ported 1:1 and locked by tests: hard-coded `01-01-2024` base (§5.4); silent
+    mid-day abort (§5.10); `SUMMARY_ABORTED` only at the top of a day loop; the
+    `Downloading Excel...` progress carries a valid pct (no NaN here — that is report-only,
+    §5.2).
+  - Popup: month input defaults to today (`YYYY-MM`), validation `'Please select a report
+    month.'` preserved; drawer slider is 0.5–3.0 step 0.5 (report's is 0.2–3.0 step 0.2),
+    `requestDelay` stored in seconds; on Generate the results section is shown immediately
+    with zeroed KPIs (matches the original's `resultsSection.classList.remove('hidden')`);
+    KPIs Total Received / Total Closed / Final Pending (`reduce` + last pending after the
+    chronological sort, `toLocaleString`); table shows Date/Prev Open/Received/Closed only;
+    replay on reopen shows results for in-flight AND done scans; `Scanning...` text fallback.
+    The `<tbody>` is keyed by the joined sorted date list so an out-of-order incoming row
+    remounts in the same chronological order the original's innerHTML rebuild produced.
+  - Workbook (`summaryWorkbook.ts`): own Calibri/white style (not the shared blue/Aptos one —
+    kept local deliberately); `Sheet1` with gridlines, widths 27.14/14.14/13.86/11.57/12.00,
+    A1:E1 merged bold title (height 18), wrapped white header row (height 45) written via
+    `row.values = HEADERS` (verified exceljs maps array index i → column i+1), data rows with
+    UTC-noon date cell (`dd-mm-yyyy` numFmt) and a **formula** Pending cell
+    `(B<r>+C<r>)-D<r>` with resolved result; filename
+    `Complaint Summary Sheet - <MONTH>-<year>.xlsx` via MONTH_NAMES. Border/fill reuse shared
+    `cellBorder`/`whiteFill`; the vertical `'center'` alignment (invalid in exceljs types,
+    accepted by Excel — original value) is cast.
