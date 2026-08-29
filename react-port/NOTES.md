@@ -267,6 +267,10 @@ ported faithfully, bug included.
    the SAMPLE fallback is anonymous, the header is effectively always attached. Ported as-is.
 8. dump-tool tab-scan accepts the **first** `localStorage` key containing `token` with no
    JSON-parse; report-tool's is stricter. Kept per-tool (not unified).
+9. **report-tool mid-category abort is silent.** If an abort arrives between the sleep and the
+   count requests (the `break`s after each sleep), the loop exits and `if (!activeScanAbort)`
+   means the finished block is skipped with no state flush and no `SCAN_ABORTED` — the popup
+   keeps showing "Stopping..." until it is closed. Ported verbatim (tested).
 
 ## 6. Things I deliberately did NOT do
 
@@ -307,3 +311,35 @@ ported faithfully, bug included.
   `tailwind.config.js`). Each `vite build` runs with CWD inside an app workspace; root-relative
   globs silently matched nothing, so no utilities were generated. Config is ESM (loaded fine via
   PostCSS/Tailwind) and prettier-formatted.
+- **Milestone 4 — report-tool ported + tested.** Everything in §1.2 is now implemented in
+  `apps/report-tool` (`src/report/{reportState,categories,countQueries,runReportScan,
+  reportWorkbook}.ts`, `src/background/index.ts`, `src/popup/App.tsx`) with 32 Vitest tests
+  (count-query payload+error mapping, workbook layout, the full per-category
+  total→resolved→open scan incl. all abort/error paths, and the popup). Ported-decision notes:
+  - `countQueries.ts` reproduces the exact conditions list (`date_filter` equal `created_date`,
+    `category` in `[<id>]`, `from_date`/`to_date` equal epoch strings, `mygate_status`
+    in/equal) and error strings from §1.2, layered over shared `postGraphQL`
+    (`credentials: 'include'`; `authorization` attached only when the token is non-empty).
+    `fetchCategoryCount` is `fetchImpl`-injectable for tests.
+  - `runReportScan.ts` takes an injectable `ReportScanDeps` (discoverToken + report's exact
+    localStorage/cookie options + console-log on discovery, fallback token, countRequest,
+    sleep, storage, messaging, downloadWorkbook, log, abortState). One count query per status,
+    a `sleep(requestDelayMs)` — default 1000 — after **each** of the 3 steps per category;
+    per-category pct `round((i+1)/n*100)`; epochs `getMidnightEpoch(from)` and
+    `getMidnightEpoch(to)+86399`. Storage key `ticketsScanState`.
+  - Quirks ported 1:1 and locked by tests: the "Downloading Excel..." `SCAN_PROGRESS_UPDATE`
+    carries no stepIndex/totalSteps → popup renders `NaN%` (§5.2); a mid-category abort does
+    `break`, skips the finished block and returns without flushing state or sending
+    `SCAN_ABORTED` — the popup stays on "Stopping..." (see §5.9); empty category selection
+    (only reachable via stale storage) falls through to an empty workbook download.
+  - Popup behavior: category pills fetched via `GET_CATEGORIES_LIST`, default all-selected,
+    selection persisted under `selectedCatIds`; `requestDelay` stored as **seconds**
+    (`Number(delaySeconds)` after slider input, matching §1.2); scan-state replay on reopen
+    (in-flight → progress; done → banner); BOTH original validation messages preserved.
+  - Workbook: headers are written explicitly into row 2 (trailing `sheet.columns`-style headers
+    aren't used — exceljs auto-writes header text into row 1, which would clash with the merged
+    title). Column widths set via `getColumn(i).width`.
+  - Shared fic: `AutoDownloadBanner` gained an optional `message` prop (default = dump's
+    existing text) so report can pass its own "Excel File Downloaded Automatically!". The test
+    chrome stub also grew a `setResponse(type, value)` hook (used to seed
+    `GET_CATEGORIES_LIST`).

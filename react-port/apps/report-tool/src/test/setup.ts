@@ -11,10 +11,16 @@ export function installChromeStub() {
   const listeners: Array<
     (msg: unknown, sender: unknown, sendResponse: (r?: unknown) => void) => void
   > = []
+  const responses = new Map<string, unknown>()
+
+  const setResponse = (type: string, value: unknown) => {
+    responses.set(type, value)
+  }
 
   const sendMessage = (message: unknown): Promise<unknown> => {
     messages.push([message])
-    return Promise.resolve(undefined)
+    const type = (message as { type?: string }).type
+    return Promise.resolve(type ? responses.get(type) : undefined)
   }
 
   const broadcast = (message: unknown): void => {
@@ -66,7 +72,7 @@ export function installChromeStub() {
     cookies: { getAll: async () => [] },
   }
 
-  return { runtime, storage, downloads, messages, broadcast, sendMessage }
+  return { runtime, storage, downloads, messages, broadcast, sendMessage, setResponse }
 }
 
 let currentStub: ReturnType<typeof installChromeStub> | null = null

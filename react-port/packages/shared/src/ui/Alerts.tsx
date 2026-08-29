@@ -20,10 +20,14 @@ export function AlertBanner({ message, tone }: AlertBannerProps) {
 }
 
 /** Green "downloaded automatically" banner shown after a successful export. */
-export function AutoDownloadBanner() {
+export function AutoDownloadBanner({
+  message = '🎉 Master Dump Excel Downloaded Automatically!',
+}: {
+  message?: string
+}) {
   return (
     <div className="mt-3.5 bg-[#ECFDF5] border-[1.5px] border-[#10B981] text-[#065F46] px-3.5 py-3.5 rounded-xl text-center text-[13px] font-bold flex items-center justify-center gap-2">
-      <span>🎉 Master Dump Excel Downloaded Automatically!</span>
+      <span>{message}</span>
     </div>
   )
 }
