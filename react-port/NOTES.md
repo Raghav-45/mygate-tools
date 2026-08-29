@@ -281,3 +281,29 @@ ported faithfully, bug included.
 
 - Decisions log appended to this file (or placed in README/MANUAL-TEST-CHECKLIST where they
   belong) as commits were made, so `git log` on `react-port` tells the full story.
+
+## 8. Porting log
+
+- **Milestone 3 — dump-tool ported + tested.** Everything in §1.1 is now implemented in
+  `apps/dump-tool` (`src/dump/{dumpState,slice,payloads,parseChunkXlsx,masterWorkbook,
+  runDumpExport}.ts`, `src/background/index.ts`, `src/popup/App.tsx`) with 25 Vitest tests
+  covering slicing, the chunk parser, the master workbook, the full request→poll→merge→download
+  run, and the popup (message broadcast, ms-delay persistence, storage replay, quirk labels).
+  Ported-decision notes:
+  - `discoverAuthToken` is reused from shared with dump's exact localStorage options.
+  - `postGraphQL` defaults to `credentials: 'include'`, but the original dump request sends no
+    cookies, so dump's deps pass `credentials: 'same-origin'`.
+  - `runDumpExport` takes an injectable `DumpDeps` (token, post, fetch, workbook load/download,
+    storage, messaging, sleep, log, abortState, poll cap) so the whole run is unit-tested with
+    a fake GraphQL server that fabricates `getDownloadReportList` responses and real XLSX
+    buffers; both the auth-failure path (`isScanning` stays true) and the abort paths are
+    covered. `abortState` is a shared mutable object between popup message wiring and the run.
+  - Popup quirks ported 1:1: `requestDelay` stored in ms and fed back into the seconds slider
+    on reload (`2000.0s` label, clamped slider) — §5.1; from>to validation message preserved.
+  - Shared fic: `packages/shared/src/ui/index.tsx` imports `../styles/base.css` (not
+    `./styles/base.css`). Icons (GearIcon, StopIcon, ZapIcon, …) exported from the shared
+    barrel for the settings/abort/about affordances.
+- **Build detail:** Tailwind content globs must be absolute (`path.join(__dirname, …)` in
+  `tailwind.config.js`). Each `vite build` runs with CWD inside an app workspace; root-relative
+  globs silently matched nothing, so no utilities were generated. Config is ESM (loaded fine via
+  PostCSS/Tailwind) and prettier-formatted.

@@ -1,9 +1,10 @@
-import './styles/base.css'
+import '../styles/base.css'
 
 export { AboutModal } from './AboutModal'
 export { AlertBanner, AutoDownloadBanner } from './Alerts'
 export { AbortButton, ExternalLink, PrimaryButton, TextLinkButton } from './Buttons'
 export { BrandHeader } from './BrandHeader'
+export { GearIcon, GithubIcon, GlobeIcon, InfoIcon, StopIcon, ZapIcon } from './icons'
 export { KpiCard, KpiGrid } from './KpiCard'
 export { Logo } from './Logo'
 export { ProgressCard } from './ProgressCard'

@@ -1,9 +1,16 @@
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
 /** @type {import('tailwindcss').Config} */
 export default {
+  // Absolute paths: every `vite build` runs with CWD inside an app workspace,
+  // so root-relative globs would match nothing under those processes.
   content: [
-    './apps/*/index.html',
-    './apps/*/src/**/*.{ts,tsx}',
-    './packages/shared/src/**/*.{ts,tsx}',
+    path.join(__dirname, 'apps/*/index.html'),
+    path.join(__dirname, 'apps/*/src/**/*.{ts,tsx}'),
+    path.join(__dirname, 'packages/shared/src/**/*.{ts,tsx}'),
   ],
   theme: {
     extend: {

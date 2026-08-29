@@ -1,5 +1,9 @@
 import '@testing-library/jest-dom/vitest'
+import { cleanup } from '@testing-library/react'
 import { afterEach, beforeEach } from 'vitest'
+
+// Deterministic dates for slice/parse tests (matches Node/worker UTC behavior).
+process.env.TZ = 'UTC'
 
 /** Shared in-memory chrome stub used by every popup/worker test. */
 export function installChromeStub() {
@@ -23,6 +27,10 @@ export function installChromeStub() {
     sendMessage,
     onMessage: {
       addListener: (fn: (m: unknown, s: unknown, r: () => void) => void) => listeners.push(fn),
+      removeListener: (fn: unknown) => {
+        const idx = listeners.indexOf(fn as (m: unknown, s: unknown, r: () => void) => void)
+        if (idx >= 0) listeners.splice(idx, 1)
+      },
     },
     lastError: undefined as undefined | { message: string },
   }
@@ -61,10 +69,18 @@ export function installChromeStub() {
   return { runtime, storage, downloads, messages, broadcast, sendMessage }
 }
 
+let currentStub: ReturnType<typeof installChromeStub> | null = null
+
+export function getChromeStub() {
+  if (!currentStub) throw new Error('chrome stub not installed (beforeEach not run?)')
+  return currentStub
+}
+
 beforeEach(() => {
-  installChromeStub()
+  currentStub = installChromeStub()
 })
 
 afterEach(() => {
+  cleanup()
   delete (globalThis as Record<string, unknown>).chrome
 })
