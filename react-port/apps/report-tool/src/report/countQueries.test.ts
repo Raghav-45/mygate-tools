@@ -29,11 +29,11 @@ describe('buildCountQueryPayload', () => {
     expect(rd.pagination).toEqual({ count: 1, page: 1 })
     expect(rd.sorting).toEqual([])
     expect(rd.conditions).toEqual([
-      { field: 'date_filter', operation: 'equal', value: 'created_date' },
-      { field: 'category', operation: 'in', value: ['252434'] },
-      { field: 'from_date', operation: 'equal', value: String(FROM_EPOCH) },
-      { field: 'to_date', operation: 'equal', value: String(TO_EPOCH) },
-      { field: 'mygate_status', operation: 'in', value: STATUS_TOTAL },
+      { name: 'date_filter', operation: 'equal', values: ['created_date'] },
+      { name: 'category', operation: 'equal', values: [252434] },
+      { name: 'from_date', operation: 'gte', values: [FROM_EPOCH] },
+      { name: 'to_date', operation: 'lte', values: [TO_EPOCH] },
+      { name: 'mygate_status', operation: 'in', values: STATUS_TOTAL },
     ])
   })
 

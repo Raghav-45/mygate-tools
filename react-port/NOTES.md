@@ -320,11 +320,12 @@ ported faithfully, bug included.
   reportWorkbook}.ts`, `src/background/index.ts`, `src/popup/App.tsx`) with 32 Vitest tests
   (count-query payload+error mapping, workbook layout, the full per-category
   total→resolved→open scan incl. all abort/error paths, and the popup). Ported-decision notes:
-  - `countQueries.ts` reproduces the exact conditions list (`date_filter` equal `created_date`,
-    `category` in `[<id>]`, `from_date`/`to_date` equal epoch strings, `mygate_status`
-    in/equal) and error strings from §1.2, layered over shared `postGraphQL`
-    (`credentials: 'include'`; `authorization` attached only when the token is non-empty).
-    `fetchCategoryCount` is `fetchImpl`-injectable for tests.
+- `countQueries.ts` reproduces the conditions from §1.2 (`date_filter` equal `created_date`,
+    `category` equal `<id>`, `from_date`/`to_date` gte/lte epoch strings (+86399),
+    `mygate_status` `equal`/`in` chosen by status length) and error strings from §1.2,
+    layered over shared `postGraphQL` (`credentials: 'include'`; `authorization` attached
+    only when the token is non-empty). `fetchCategoryCount` is `fetchImpl`-injectable for
+    tests.
   - `runReportScan.ts` takes an injectable `ReportScanDeps` (discoverToken + report's exact
     localStorage/cookie options + console-log on discovery, fallback token, countRequest,
     sleep, storage, messaging, downloadWorkbook, log, abortState). One count query per status,

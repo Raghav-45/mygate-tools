@@ -23,7 +23,7 @@ export interface CountQueryPayload {
       requiredFields: string[]
       pagination: { count: number; page: number }
       sorting: unknown[]
-      conditions: Array<{ field: string; operation: string; value: unknown }>
+      conditions: Array<{ name: string; operation: string; values: unknown[] }>
     }
   }
   query: string
@@ -43,11 +43,15 @@ export function buildCountQueryPayload(
         pagination: { count: 1, page: 1 },
         sorting: [],
         conditions: [
-          { field: 'date_filter', operation: 'equal', value: 'created_date' },
-          { field: 'category', operation: 'in', value: [String(categoryId)] },
-          { field: 'from_date', operation: 'equal', value: String(fromEpoch) },
-          { field: 'to_date', operation: 'equal', value: String(toEpoch) },
-          { field: 'mygate_status', operation: 'in', value: statuses },
+          { name: 'date_filter', operation: 'equal', values: ['created_date'] },
+          { name: 'category', operation: 'equal', values: [categoryId] },
+          { name: 'from_date', operation: 'gte', values: [fromEpoch] },
+          { name: 'to_date', operation: 'lte', values: [toEpoch] },
+          {
+            name: 'mygate_status',
+            operation: statuses.length === 1 ? 'equal' : 'in',
+            values: statuses,
+          },
         ],
       },
     },
