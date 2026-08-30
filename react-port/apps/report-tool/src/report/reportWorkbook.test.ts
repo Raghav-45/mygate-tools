@@ -44,7 +44,7 @@ describe('buildPendingTicketsWorkbook', () => {
     expect(ws.getCell('D4').value).toBe(0)
 
     // TOTALS row (no bold/yellow stip).
-    expect(ws.getCell('A5').value).toBe('TOTALS')
+    expect(ws.getCell('A5').value).toBe('Total')
     expect(ws.getCell('B5').value).toBe(15)
     expect(ws.getCell('C5').value).toBe(9)
     expect(ws.getCell('D5').value).toBe(6)

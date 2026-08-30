@@ -61,7 +61,7 @@ export function buildPendingTicketsWorkbook(
     sheet.addRow([data.name, data.total, data.resolved, data.open])
   }
 
-  sheet.addRow(['TOTALS', summary.total, summary.resolved, summary.open])
+  sheet.addRow(['Total', summary.total, summary.resolved, summary.open])
 
   const lastRow = sheet.rowCount
   for (let r = 3; r <= lastRow; r++) {
