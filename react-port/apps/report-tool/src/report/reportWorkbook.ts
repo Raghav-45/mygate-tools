@@ -72,10 +72,6 @@ export function buildPendingTicketsWorkbook(
     row.getCell(4).alignment = { vertical: 'middle', horizontal: 'right' }
   }
 
-  const totalsRow = sheet.getRow(lastRow)
-  totalsRow.font = { bold: true }
-  totalsRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF08A' } }
-
   for (let r = 1; r <= lastRow; r++) {
     for (let c = 1; c <= 4; c++) {
       sheet.getCell(r, c).border = cellBorder

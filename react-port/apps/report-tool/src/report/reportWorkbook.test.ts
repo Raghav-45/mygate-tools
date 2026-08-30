@@ -43,13 +43,12 @@ describe('buildPendingTicketsWorkbook', () => {
     expect(ws.getCell('A4').value).toBe('IT WIFI Network')
     expect(ws.getCell('D4').value).toBe(0)
 
-    // TOTALS row is bold and yellow.
+    // TOTALS row (no bold/yellow stip).
     expect(ws.getCell('A5').value).toBe('TOTALS')
     expect(ws.getCell('B5').value).toBe(15)
     expect(ws.getCell('C5').value).toBe(9)
     expect(ws.getCell('D5').value).toBe(6)
-    expect(ws.getRow(5).font?.bold).toBe(true)
-    expect((ws.getRow(5).fill as { fgColor: { argb: string } }).fgColor.argb).toBe('FFFEF08A')
+    expect(ws.getRow(5).font?.bold).toBeFalsy()
 
     // Column widths 55 / 9 / 12 / 8.
     expect(ws.getColumn(1).width).toBe(55)
