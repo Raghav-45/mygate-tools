@@ -624,10 +624,12 @@ def _slot_spec(slot, stats):
             lambda: _num_cache("General", vals(sub_pairs), SUB + 1),
         ]
     elif slot == 4:
-        refs = [f"Calc!$G$2:$G${i_stat_row}", f"Calc!$H$2:$H${i_stat_row}"]
+        # unpadded like the reference doughnut cache: legend lists exactly the
+        # real statuses (the pad row would render an empty legend entry)
+        refs = [f"Calc!$G$2:$G${1 + ST}", f"Calc!$H$2:$H${1 + ST}"]
         caches = [
-            lambda: _str_cache(pad_label(sta_pairs), ST + 1),
-            lambda: _num_cache("General", vals(sta_pairs), ST + 1),
+            lambda: _str_cache(labels(sta_pairs), ST),
+            lambda: _num_cache("General", vals(sta_pairs), ST),
         ]
     elif slot == 5:
         refs = [f"Calc!$P$2:$P${i_phase_row}", f"Calc!$Q$2:$Q${i_phase_row}"]
@@ -684,11 +686,30 @@ _F_PAT = re.compile(r"<c:f>[^<]*</c:f>")
 _CACHE_PAT = re.compile(r"<c:(numCache|strCache)>.*?</c:\1>", re.S)
 
 
+def _add_val_ax_min_zero(xml):
+    """Force the value-axis minimum to 0 on the trend charts. The reference
+    workbook renders its y-axis starting at 0; Excel's auto-scaling can pick
+    a negative minimum when the data spans a wide range."""
+    m = re.search(r"<c:valAx>.*?</c:valAx>", xml, re.S)
+    if not m:
+        return xml
+    block = m.group(0)
+    s = re.search(r"<c:scaling>.*?</c:scaling>", block, re.S)
+    if not s or "<c:min" in s.group(0):
+        return xml
+    new_block = block.replace(
+        s.group(0), s.group(0)[:-len("</c:scaling>")]
+        + '<c:min val="0"/></c:scaling>', 1)
+    return xml[: m.start()] + new_block + xml[m.end():]
+
+
 def _adapt_template(slot, refs, caches):
     xml = (TEMPLATE_DIR / f"chart{slot}.xml").read_bytes().decode("utf-8")
     fs = [f"<c:f>{r}</c:f>" for r in refs]
     xml = _replace_blocks(xml, _F_PAT, fs)
     xml = _replace_blocks(xml, _CACHE_PAT, caches)
+    if slot in (1, 6):
+        xml = _add_val_ax_min_zero(xml)
     return xml
 
 
@@ -971,6 +992,8 @@ def build_interactive(wb, stats, as_on):
     ws.row_dimensions[8].height = 30.0
     ws.row_dimensions[9].height = 19.5
 
+    ws["B4"] = "FILTERS"
+    ws["B4"].font = Font(name="Arial", size=10, bold=True, color=RED)
     for label_cell, label, value_cell in FILTER_CELLS:
         ws[label_cell] = label
         ws[label_cell].font = Font(name="Arial", size=9, bold=True, color=NAVY)
