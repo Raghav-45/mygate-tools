@@ -897,19 +897,19 @@ def build_calc_sheet(wb, stats, frows=FORMULA_ROW_END):
     # categories
     for i, cat in enumerate(stats["category_order"], start=2):
         ws.cell(i, 1, cat)
-        ws.cell(i, 2, f"=COUNTIFS(Data!$E$2:$E${frows},$A{i},{filters})")
+        ws.cell(i, 2, f"=COUNTIFS(Data!$E$2:$E${frows},$A${i},{filters})")
     # top sub-categories
     for i, sub in enumerate(stats["subcat_chart"], start=2):
         ws.cell(i, 4, sub)
-        ws.cell(i, 5, f"=COUNTIFS(Data!$F$2:$F${frows},$D{i},{filters})")
+        ws.cell(i, 5, f"=COUNTIFS(Data!$F$2:$F${frows},$D${i},{filters})")
     # statuses
     for i, st in enumerate(stats["status_order"], start=2):
         ws.cell(i, 7, st)
-        ws.cell(i, 8, f"=COUNTIFS(Data!$J$2:$J${frows},$G{i},{filters})")
+        ws.cell(i, 8, f"=COUNTIFS(Data!$J$2:$J${frows},$G${i},{filters})")
     # phases
     for i, ph in enumerate(stats["phase_order"], start=2):
         ws.cell(i, 16, ph)
-        ws.cell(i, 17, f"=COUNTIFS(Data!$G$2:$G${frows},$P{i},{filters})")
+        ws.cell(i, 17, f"=COUNTIFS(Data!$G$2:$G${frows},$P${i},{filters})")
     # monthly trend — every month in the data range, zero-filled
     for i, (y, m) in enumerate(stats["months"], start=2):
         ws.cell(i, 19, date(y, m, 1)).number_format = "mmm-yy"
@@ -1091,12 +1091,20 @@ def build_overview(wb, stats, as_on, period_from, period_to):
     ws.row_dimensions[3].height = 18.0
 
     st = stats["status"]
+    # KPI values are live COUNTA/COUNTIF formulas over the Data sheet — exactly
+    # like the hand-made dashboard's Overview cards (no static numbers).
     cards = [
-        ("B", "C", "TOTAL COMPLAINTS", stats["total"], "All logged tickets", NAVY),
-        ("D", "E", "OPEN / IN PROGRESS", st.get("In Progress", 0),
+        ("B", "C", "TOTAL COMPLAINTS",
+         f"=COUNTA(Data!$B$2:$B${FORMULA_ROW_END})", "All logged tickets", NAVY),
+        ("D", "E", "OPEN / IN PROGRESS",
+         f'=COUNTIF(Data!$J$2:$J${FORMULA_ROW_END},"In Progress")',
          "Awaiting resolution", MID_BLUE),
-        ("F", "G", "REOPENED", st.get("Reopened", 0), "Returned after closure", RED),
-        ("I", "J", "ON HOLD", st.get("On Hold", 0), "Held by Projects", GOLD),
+        ("F", "G", "REOPENED",
+         f'=COUNTIF(Data!$J$2:$J${FORMULA_ROW_END},"Reopened")',
+         "Returned after closure", RED),
+        ("I", "J", "ON HOLD",
+         f'=COUNTIF(Data!$J$2:$J${FORMULA_ROW_END},"On Hold")',
+         "Held by Projects", GOLD),
     ]
     for col, right, label, value, sub, color in cards:
         ws.merge_cells(f"{col}5:{right}5")

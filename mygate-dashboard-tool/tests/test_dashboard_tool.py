@@ -218,9 +218,9 @@ def test_mini_dashboards_structure(mini):
 
 
 def test_mini_self_consistency(mini):
-    """Counts computed in Python must equal what the static cards show, and the
-    Calc formulas must be able to reproduce them (evaluated against the Data
-    values with an actual emulation of COUNTIFS semantics)."""
+    """The Overview cards must be live COUNTA/COUNTIF formulas against the Data
+    sheet, exactly like the hand-made dashboard, and the status literals used
+    must match the statuses actually written into the Data sheet."""
     wb, tmp = mini
     rows = []
     ws = wb["Data"]
@@ -230,10 +230,14 @@ def test_mini_self_consistency(mini):
                          date=ws.cell(r, 4).value))
     counts = Counter(x["status"] for x in rows)
     ov = wb["Overview (static)"]
-    assert ov["B6"].value == len(rows)
-    assert ov["D6"].value == counts["In Progress"]
-    assert ov["F6"].value == counts["Reopened"]
-    assert ov["I6"].value == counts["On Hold"]
+    fe = make_dashboard.FORMULA_ROW_END
+    assert ov["B6"].value == f"=COUNTA(Data!$B$2:$B${fe})"
+    assert ov["D6"].value == f'=COUNTIF(Data!$J$2:$J${fe},"In Progress")'
+    assert ov["F6"].value == f'=COUNTIF(Data!$J$2:$J${fe},"Reopened")'
+    assert ov["I6"].value == f'=COUNTIF(Data!$J$2:$J${fe},"On Hold")'
+    # The literals inside the card formulas must be exactly the status values
+    # the Data sheet holds — otherwise a COUNTIF card would silently read 0.
+    assert set(counts) <= {"In Progress", "Reopened", "On Hold", "New"}
     # bundle + cli smoke
     result = subprocess.run(
         [sys.executable, str(TOOL_DIR / "make_dashboard.py"),
@@ -397,12 +401,25 @@ def test_golden_nikhil_data_roundtrip(tmp_path):
 
     # --- 7) Overview KPI cards identical -------------------------------------
     go, ro = gen["Overview (static)"], ref_v["Overview (static)"]
+    rof = ref_f["Overview (static)"]
     for ref_cell in ["B2", "B3", "B5", "D5", "F5", "I5", "B7", "D7", "F7", "I7"]:
         assert go[ref_cell].value == ro[ref_cell].value, ref_cell
-    # static values: total / in progress / reopened — match Nikhil's snapshot
-    assert go["B6"].value == ro["B6"].value == len(dump_rows)
-    assert go["D6"].value == ro["D6"].value
-    assert go["F6"].value == ro["F6"].value
+    # Card values are live COUNTA/COUNTIF formulas over the Data sheet, same as
+    # the hand-made file. (His status literal "HOLD" -> our "On Hold"; range
+    # ends normalized to $10000. The actual counts match his snapshot because
+    # the Data sheets are row-identical — asserted above.)
+    expected_cards = {
+        "B6": f"=COUNTA(Data!$B$2:$B${make_dashboard.FORMULA_ROW_END})",
+        "D6": f'=COUNTIF(Data!$J$2:$J${make_dashboard.FORMULA_ROW_END},"In Progress")',
+        "F6": f'=COUNTIF(Data!$J$2:$J${make_dashboard.FORMULA_ROW_END},"Reopened")',
+        "I6": f'=COUNTIF(Data!$J$2:$J${make_dashboard.FORMULA_ROW_END},"On Hold")',
+    }
+    for cell, our_formula in expected_cards.items():
+        assert (
+            _normalize_formula(str(go[cell].value), "Data")
+            == _normalize_formula(str(rof[cell].value), "Data")
+            == _normalize_formula(our_formula, "Data")
+        ), cell
 
 
 def _chart_title(chart):
@@ -480,10 +497,13 @@ def test_golden_real_dump_integration(tmp_path):
     only_gen = set(gen_rows) - set(ref_rows)
     assert len(only_ref) + len(only_gen) <= 60
 
-    # dashboard self-consistency on the generated file
+    # dashboard self-consistency on the generated file: live card formulas whose
+    # literals match the statuses actually written to the Data sheet
     counts = Counter(x[9] for x in gen_rows.values())
     ov = gen["Overview (static)"]
-    assert ov["B6"].value == len(gen_rows)
-    assert ov["D6"].value == counts["In Progress"]
-    assert ov["F6"].value == counts["Reopened"]
-    assert ov["I6"].value == counts["On Hold"]
+    fe = make_dashboard.FORMULA_ROW_END
+    assert ov["B6"].value == f"=COUNTA(Data!$B$2:$B${fe})"
+    assert ov["D6"].value == f'=COUNTIF(Data!$J$2:$J${fe},"In Progress")'
+    assert ov["F6"].value == f'=COUNTIF(Data!$J$2:$J${fe},"Reopened")'
+    assert ov["I6"].value == f'=COUNTIF(Data!$J$2:$J${fe},"On Hold")'
+    assert set(counts) <= {"In Progress", "Reopened", "On Hold", "New"}
