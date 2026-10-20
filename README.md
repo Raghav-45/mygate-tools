@@ -1,12 +1,14 @@
 # mygate-tools
 
-Three Chrome (Manifest V3) extensions for the MyGate admin dashboard:
+Four tools for the MyGate admin dashboard — three Chrome (Manifest V3)
+extensions and one Python CLI:
 
 | Tool | Purpose | Folder |
 |------|---------|--------|
 | **MyGate Dump Tool** | Autonomous multi-year ticket dump exporter (bypasses MyGate's 1-year export restriction) | `mygate-dump-tool` |
 | **MyGate Report Tool** | Generate pending tickets report from MyGate Dashboard GraphQL API | `mygate-report-tool` |
 | **MyGate Summary Tool** | Complaint summary sheet automation | `mygate-summary-tool` |
+| **MyGate Dashboard Tool** | Python CLI: builds the "Mygate Complaints Dashboard as on DD.MM.YY" workbook (interactive COUNTIFS dashboard + charts) from a Dump-Tool master dump; verified 1:1 against the hand-made dashboards | `mygate-dashboard-tool` |
 
 ## Trigger a release (GitHub)
 
