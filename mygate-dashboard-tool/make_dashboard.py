@@ -94,9 +94,11 @@ DOUGHNUT_PALETTE = ["4F81BD", "C0504D", "9BBB59", "8064A2", "4BACC6", "8064A2"]
 DEFAULT_PERIOD_FROM = date(2024, 1, 1)
 
 # The formula engine counts over a generous fixed range so the dashboard keeps
-# working if rows are appended to Data manually (the hand-made file did the
-# same with $2:$9752).
-FORMULA_ROW_END = 10000
+# working if rows are appended to Data manually.  The hand-made file used the
+# very constants below, so they are kept verbatim to stay byte-comparable with
+# the reference (a dump larger than FORMULA_ROW_END rows would need a bump).
+FORMULA_ROW_END = 9752        # engine + Overview cards + Analysis table feed;
+SUBCAT_CHART_ROWS = 10        # Analysis/Overview show a fixed Top-10 sub list
 
 DATA_HEADERS = [
     "Sr No.",
@@ -340,7 +342,16 @@ def aggregate(rows):
     def desc(counter):
         return [k for k, _ in counter.most_common()]
 
+    # Canonical status order from the data — feeds the filter dropdown, the V
+    # KPI cards and every status literal. The *display* tables (Calc G/H,
+    # Analysis G/H) use stats["status_table"] instead: the hand-made reference
+    # keeps those rows fixed regardless of the data (donor files read
+    # "In Progress, Reopened, HOLD, Repeated" even when the dump has "On
+    # Hold"), which is what makes her doughnuts show four always-included
+    # slices. aggregate() defaults it to the data order; main() overrides it
+    # verbatim from the design reference when one is given.
     stats["status_order"] = desc(stats["status"]) or list(STATUS_ORDER_FALLBACK)
+    stats["status_table"] = list(stats["status_order"])
     stats["category_order"] = desc(stats["category"])
     stats["phase_order"] = desc(stats["phase"])
 
@@ -580,7 +591,11 @@ def _slot_spec(slot, stats):
     """(ordered refs, ordered cache xml builders) for a given chart slot."""
     cats = stats["category_order"]
     subs = stats["subcat_chart"]
-    stas = stats["status_order"]
+    # Status rows follow the hand-made table verbatim (donor-supplied), not
+    # the data-derived order — zero-count rows (e.g. HOLD/Repeated) stay in
+    # the doughnuts exactly as in the reference workbook. Counts come from a
+    # literal lookup so labels the dump never contains read 0.
+    stas = stats.get("status_table") or stats["status_order"]
     phs = stats["phase_order"]
     months = stats["months"]
     month_counts = [stats["month"].get((y, m), 0) for y, m in months]
@@ -594,7 +609,7 @@ def _slot_spec(slot, stats):
     i_phase_row = PH + 2
     cat_pairs = [(c, stats["category"][c]) for c in cats]
     sub_pairs = [(s, stats["subcat"][s]) for s in subs]
-    sta_pairs = [(s, stats["status"][s]) for s in stas]
+    sta_pairs = [(s, stats["status"].get(s, 0)) for s in stas]
     pha_pairs = [(p, stats["phase"][p]) for p in phs]
 
     def labels(pairs):
@@ -624,12 +639,16 @@ def _slot_spec(slot, stats):
             lambda: _num_cache("General", vals(sub_pairs), SUB + 1),
         ]
     elif slot == 4:
-        # unpadded like the reference doughnut cache: legend lists exactly the
-        # real statuses (the pad row would render an empty legend entry)
-        refs = [f"Calc!$G$2:$G${1 + ST}", f"Calc!$H$2:$H${1 + ST}"]
+        # The reference doughnut spans the status table INCLUDING its trailing
+        # blank row (Calc!$G$2:$G$6 with the table on rows 2-5). Excel itself
+        # caches that range asymmetrically: strCache is ptCount=ST (the four
+        # real labels), numCache is ptCount=ST+1 (values for the real rows
+        # only, blank idx-4 point). Replicate both exactly — the rendered
+        # legend lists exactly the four hand-typed statuses.
+        refs = [f"Calc!$G$2:$G${i_stat_row}", f"Calc!$H$2:$H${i_stat_row}"]
         caches = [
             lambda: _str_cache(labels(sta_pairs), ST),
-            lambda: _num_cache("General", vals(sta_pairs), ST),
+            lambda: _num_cache("General", vals(sta_pairs), ST + 1),
         ]
     elif slot == 5:
         refs = [f"Calc!$P$2:$P${i_phase_row}", f"Calc!$Q$2:$Q${i_phase_row}"]
@@ -742,7 +761,12 @@ def _drawing_rels_xml(targets):
     )
 
 
-def apply_reference_charts(path, stats, log=print):
+_SST_CELL_PAT = re.compile(
+    r'<c r="([A-Z]+\d+)"((?: [a-zA-Z]+="[^"]*")*) t="inlineStr">'
+    r'<is><t( xml:space="preserve")?>(.*?)</t></is></c>', re.DOTALL)
+
+
+def apply_reference_charts(path, stats, log=print, design_ref=None):
     """Rewrite the saved workbook's chart parts and drawing parts so every
     rendered chart property matches the hand-made reference workbook."""
     if not TEMPLATE_DIR.is_dir():
@@ -786,13 +810,271 @@ def apply_reference_charts(path, stats, log=print):
     replacements["xl/drawings/_rels/drawing2.xml.rels"] = \
         _drawing_rels_xml([part_by_slot[s] for s in range(6, 11)]).encode("utf-8")
 
+    # Theme bytes: take the hand-made file's theme verbatim (fonts/colours
+    # referenced by the copied styles), only when a design reference is given.
+    theme_blob = None
+    if design_ref:
+        with zipfile.ZipFile(design_ref) as zref:
+            theme_blob = zref.read("xl/theme/theme1.xml")
+
+    # openpyxl 3.1.5 serialises every string cell inline (<is><t>).  Restore a
+    # shared-string table so the package carries the same parts the hand-made
+    # workbook has (Excel parity, and smaller files).
+    sst_index, sst_entries, sst_refs = {}, [], 0
+
+    def _share(m):
+        nonlocal sst_refs
+        ref, others, preserve, text = m.group(1), m.group(2), m.group(3) or "", m.group(4)
+        key = (preserve, text)
+        idx = sst_index.get(key)
+        if idx is None:
+            idx = len(sst_entries)
+            sst_index[key] = idx
+            sst_entries.append(key)
+        sst_refs += 1
+        return f'<c r="{ref}"{others} t="s"><v>{idx}</v></c>'
+
+    _REF_ERR_PAT = re.compile(
+        r'<c r="([A-Z]+\d+)"((?: [a-zA-Z]+="[^"]*")*)>'
+        r'<f>([^<]*#REF![^<]*)</f>(?:<v\s*/>|<v></v>|<v>[^<]*</v>)?</c>')
+
+    def _cache_ref_error(m):
+        return (f'<c r="{m.group(1)}"{m.group(2)} t="e">'
+                f'<f>{m.group(3)}</f><v>#REF!</v></c>')
+
+    for name in names:
+        if not re.match(r"xl/worksheets/sheet\d+\.xml$", name):
+            continue
+        xml = zin.read(name).decode("utf-8")
+        transformed = _REF_ERR_PAT.sub(_cache_ref_error, xml)
+        transformed = _SST_CELL_PAT.sub(_share, transformed)
+        if transformed != xml:
+            replacements[name] = transformed.encode("utf-8")
+
+    if sst_entries:
+        sst_doc = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+            f'count="{sst_refs}" uniqueCount="{len(sst_entries)}">'
+            + "".join(f"<si><t{p}>{t}</t></si>" for p, t in sst_entries)
+            + "</sst>")
+        replacements["xl/sharedStrings.xml"] = sst_doc.encode("utf-8")
+
+        ct_name = "[Content_Types].xml"
+        ct = zin.read(ct_name).decode("utf-8")
+        override = ('<Override PartName="/xl/sharedStrings.xml" '
+                    'ContentType="application/vnd.openxmlformats-officedocument'
+                    '.spreadsheetml.sharedStrings+xml"/>')
+        replacements[ct_name] = ct.replace(
+            "</Types>", override + "</Types>", 1).encode("utf-8")
+
+        rels_name = "xl/_rels/workbook.xml.rels"
+        rels = zin.read(rels_name).decode("utf-8")
+        ids = [int(i) for i in re.findall(r'Id="rId(\d+)"', rels)]
+        rid = max(ids) + 1 if ids else 1
+        rels = rels.replace(
+            "</Relationships>",
+            f'<Relationship Id="rId{rid}" Type="http://schemas.openxmlformats'
+            '.org/officeDocument/2006/relationships/sharedStrings" '
+            'Target="sharedStrings.xml"/></Relationships>', 1)
+        replacements[rels_name] = rels.encode("utf-8")
+
     tmp = str(path) + ".tmp"
+    written = set()
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
         for name in names:
-            zout.writestr(
-                name, replacements.get(name) or zin.read(name))
+            written.add(name)
+            blob = replacements.get(name)
+            if blob is None:
+                blob = zin.read(name)
+                if name == "xl/theme/theme1.xml" and theme_blob is not None:
+                    blob = theme_blob
+            zout.writestr(name, blob)
+        for name, blob in replacements.items():
+            if name not in written:
+                zout.writestr(name, blob)
     zin.close()
     Path(tmp).replace(path)
+
+
+# --- Design-layer import -----------------------------------------------------
+
+def donor_status_table(ref_path):
+    """The hand-made workbook's fixed status-table labels, verbatim.
+
+    Read from Calc column G (G2 downwards, stop at the first blank) — the
+    same rows the reference's doughnut charts point at.  The hand-made files
+    keep this list hand-typed whatever the data contains, so the visible
+    slice set rides on it: both reference files read "In Progress, Reopened,
+    HOLD, Repeated" even when the dump only has "On Hold"/"New", which is why
+    their doughnuts always show four entries (the zero-count ones render as
+    blank wedges with a 0% label).  Returning an empty list means "no donor
+    table found — fall back to the data-derived order".
+    """
+    ref = load_workbook(ref_path, read_only=True, data_only=True)
+    labels = []
+    try:
+        ws = ref["Calc"]
+        for row in ws.iter_rows(min_row=2, max_row=80, min_col=7, max_col=7):
+            v = row[0].value
+            if v is None or not str(v).strip():
+                break
+            labels.append(str(v))
+    finally:
+        ref.close()
+    return labels
+
+
+def import_design_reference(wb, ref_path, stats):
+    """Positionally import the hand-made workbook's design layer.
+
+    Per cell: style facets only (font/fill/border/alignment/protection and the
+    number format) — engine-computed values and formulas stay ours.  Cells
+    registered only in the reference are created (trailing styled empties on
+    Data, the DLP third row, stale filter-list tail cells); for those, the
+    reference value is copied too.  Also: column/row dimensions, sheet
+    defaults, page setup, autofilter, data validations (verbatim strings,
+    missing dump values appended so every dropdown stays functional) and the
+    Calc X sub-category filter list with its named range.
+    """
+    from copy import copy as _copy
+
+    ref = load_workbook(ref_path)
+
+    # Style tables: the first entry of each is the *default* style openpyxl
+    # re-applies to merged-range tail cells on load.  Seed it from the
+    # reference workbook's own font-0 so the defaults compare equal, while
+    # every explicitly styled cell keeps its own copied style.
+    try:
+        wb._fonts[0] = _copy(ref._fonts[0])
+    except (IndexError, TypeError):
+        pass
+    try:
+        wb._fills[0] = _copy(ref._fills[0])
+    except (IndexError, TypeError):
+        pass
+    try:
+        wb._borders[0] = _copy(ref._borders[0])
+    except (IndexError, TypeError):
+        pass
+
+    for sn in wb.sheetnames:
+        rws, mws = ref[sn], wb[sn]
+
+        for (row, col), rcell in rws._cells.items():
+            mcell = mws.cell(row, col)
+            if mcell.value is None and rcell.value is not None:
+                mcell.value = rcell.value
+            mcell.font = _copy(rcell.font)
+            mcell.fill = _copy(rcell.fill)
+            mcell.border = _copy(rcell.border)
+            mcell.alignment = _copy(rcell.alignment)
+            mcell.protection = _copy(rcell.protection)
+            mcell.number_format = rcell.number_format
+
+        mws.column_dimensions.clear()
+        for key, rcd in rws.column_dimensions.items():
+            ncd = mws.column_dimensions[key]
+            ncd.min, ncd.max = rcd.min, rcd.max
+            ncd.width = rcd.width
+            ncd.hidden = rcd.hidden
+            # customWidth is derived from width being set — nothing to copy
+
+        mws.row_dimensions.clear()
+        for key, rrd in rws.row_dimensions.items():
+            nrd = mws.row_dimensions[key]
+            nrd.height = rrd.height
+            nrd.hidden = rrd.hidden
+
+        for attr in ("baseColWidth", "defaultColWidth", "defaultRowHeight",
+                     "customHeight", "zeroHeight"):
+            try:
+                setattr(mws.sheet_format, attr, getattr(rws.sheet_format, attr))
+            except AttributeError:
+                pass
+        for attr in ("orientation", "paperSize", "scale", "fitToWidth",
+                     "fitToHeight", "firstPageNumber", "useFirstPageNumber",
+                     "horizontalDpi", "verticalDpi", "copies"):
+            try:
+                setattr(mws.page_setup, attr, getattr(rws.page_setup, attr))
+            except AttributeError:
+                pass
+        rpm, mpm = rws.page_margins, mws.page_margins
+        for attr in ("left", "right", "top", "bottom", "header", "footer"):
+            setattr(mpm, attr, getattr(rpm, attr))
+        mws.print_title_rows = rws.print_title_rows
+        mws.print_title_cols = rws.print_title_cols
+        if rws.print_area:
+            mws.print_area = rws.print_area
+        mws.auto_filter.ref = rws.auto_filter.ref
+        # View state rides on the reference too: the hand-made files remember
+        # the Data pane at the position the author left it frozen at (e.g.
+        # A854 in his Sept files vs A2 elsewhere). Copy verbatim — it is part
+        # of the donor workbook's saved behavior, not an engine detail.
+        try:
+            mws.freeze_panes = rws.freeze_panes
+        except Exception:
+            pass
+
+    # Data validations — copy the hand-made entries attribute-for-attribute.
+    # List-of-values strings keep their order; raw dump values missing from a
+    # formula1 list are appended so filtering still reaches every data value.
+    dv_values = {
+        "C5": stats["phase_order"],
+        "F5": stats["status_order"],
+        "L5": stats["category_order"],
+    }
+    for sn in ("Interactive",):
+        rws, mws = ref[sn], wb[sn]
+        mws.data_validations.dataValidation = []
+        for rdv in rws.data_validations.dataValidation:
+            f1 = rdv.formula1
+            if rdv.type == "list" and f1 and f1.startswith('"'):
+                items = f1.strip('"').split(",")
+                src = dv_values.get(str(rdv.sqref).split(":")[0])
+                if src:
+                    items += [v for v in src if v not in items]
+                    f1 = '"' + ",".join(items) + '"'
+            dv = DataValidation(
+                type=rdv.type, formula1=f1, formula2=rdv.formula2,
+                allow_blank=rdv.allow_blank, showDropDown=rdv.showDropDown,
+                showInputMessage=rdv.showInputMessage,
+                showErrorMessage=rdv.showErrorMessage,
+                errorStyle=rdv.errorStyle, errorTitle=rdv.errorTitle,
+                error=rdv.error, promptTitle=rdv.promptTitle, prompt=rdv.prompt,
+            )
+            dv.add(str(rdv.sqref))
+            mws.add_data_validation(dv)
+
+    # Calc X filter list: the hand-made list verbatim (stale hand entries
+    # included, that is the design), with any dump sub-category it misses
+    # appended, keeping the named range in sync.
+    rcalc, calc = ref["Calc"], wb["Calc"]
+    ref_x = []
+    r = 1
+    while rcalc.cell(r, 24).value is not None:
+        ref_x.append(rcalc.cell(r, 24).value)
+        r += 1
+    subs = stats["subcat_filter"][1:]
+    final_x = list(ref_x) + [v for v in subs if v not in ref_x]
+    mine_max = max((rr for (rr, cc) in calc._cells if cc == 24), default=1)
+    for rr in range(1, max(mine_max, len(final_x)) + 1):
+        calc.cell(rr, 24).value = None
+    for rr, v in enumerate(final_x, start=1):
+        calc.cell(rr, 24, v)
+    rlast = rcalc.cell(len(ref_x), 24)
+    for rr in range(len(ref_x) + 1, len(final_x) + 1):
+        ncell = calc.cell(rr, 24)
+        ncell.font = _copy(rlast.font)
+        ncell.fill = _copy(rlast.fill)
+        ncell.border = _copy(rlast.border)
+        ncell.alignment = _copy(rlast.alignment)
+        ncell.protection = _copy(rlast.protection)
+        ncell.number_format = rlast.number_format
+    wb.defined_names["SubCategoryFilterList"].attr_text = (
+        f"Calc!$X$1:$X${len(final_x)}")
+    ref.close()
+    return ref
 
 
 # --- Data sheet -------------------------------------------------------------
@@ -902,8 +1184,12 @@ def build_calc_sheet(wb, stats, frows=FORMULA_ROW_END):
     for i, sub in enumerate(stats["subcat_chart"], start=2):
         ws.cell(i, 4, sub)
         ws.cell(i, 5, f"=COUNTIFS(Data!$F$2:$F${frows},$D${i},{filters})")
-    # statuses
-    for i, st in enumerate(stats["status_order"], start=2):
+    # statuses — the hand-made workbook's FIXED status table, verbatim
+    # (donor-supplied; falls back to the data-derived order without a
+    # --design-ref). Rows absent from the dump legitimately count 0, exactly
+    # like the reference's doughnuts, which always show all four slices.
+    status_table = stats.get("status_table") or stats["status_order"]
+    for i, st in enumerate(status_table, start=2):
         ws.cell(i, 7, st)
         ws.cell(i, 8, f"=COUNTIFS(Data!$J$2:$J${frows},$G${i},{filters})")
     # phases
@@ -1027,7 +1313,7 @@ def build_interactive(wb, stats, as_on):
 
     calc = wb["Calc"]
     n_months = len(stats["months"])
-    n_status = len(stats["status_order"])
+    n_status = len(stats.get("status_table") or stats["status_order"])
     n_phase = len(stats["phase_order"])
     n_subcat = max(len(stats["subcat_chart"]), 12)
 
@@ -1139,7 +1425,7 @@ def build_overview(wb, stats, as_on, period_from, period_to):
     n_phase = len(stats["phase_order"])
     n_cat = len(stats["category_order"])
     n_sub = len(stats["subcat_chart"])
-    n_status = len(stats["status_order"])
+    n_status = len(stats.get("status_table") or stats["status_order"])
 
     add_chart(ws, line_chart(
         "Monthly Complaint Volume  (escalation trend)",
@@ -1231,13 +1517,15 @@ def build_analysis(wb, stats, frows=FORMULA_ROW_END):
 
     section(2, 1, stats["category_order"],
             "=COUNTIF({cat},A{{i}})".format(cat=rng["cat"]), 3)
-    section(5, 4, stats["subcat_chart"],
+    section(5, 4, stats["subcat_chart"][:SUBCAT_CHART_ROWS],
             "=COUNTIF({sub},D{{i}})".format(sub=rng["sub"]), 3)
-    section(8, 7, stats["status_order"],
+    section(8, 7, stats.get("status_table") or stats["status_order"],
             "=COUNTIF({status},G{{i}})".format(status=rng["status"]), 3)
     # DLP cannot be derived from the dump (MyGate provides no purchase dates).
-    # Replicated verbatim from the hand-made workbook, broken #REF! formulas included.
-    for i, label in ((3, "Out Of DLP"), (4, "Under DLP")):
+    # Replicated verbatim from the hand-made workbook, broken #REF! formulas
+    # included — the reference writes three DLP rows (Out Of / Under / Not
+    # Specified), the third with an equally broken #REF! formula.
+    for i, label in ((3, "Out Of DLP"), (4, "Under DLP"), (5, "Not Specified")):
         ws.cell(i, 10, label).font = body_font
         ccell = ws.cell(i, 11, f"=COUNTIF(Data!#REF!,J{i})")
         ccell.font = body_font
@@ -1334,6 +1622,11 @@ def main(argv=None):
     ap.add_argument("--as-on", dest="as_on", type=parse_as_on_arg, default=None,
                     help="as-on label, e.g. 22.09.26 (default: derived automatically)")
     ap.add_argument("--out", type=Path, default=None, help="output .xlsx path")
+    ap.add_argument(
+        "--design-ref", type=Path, default=None,
+        help="hand-made workbook (.xlsm/.xlsx) to import the design layer from "
+             "— per-cell styling, dimensions, page setup, autofilter, filter "
+             "dropdowns, theme; content/formulas stay computed from the dump")
     ap.add_argument("--quiet", action="store_true", help="suppress the summary")
     args = ap.parse_args(argv)
 
@@ -1351,12 +1644,35 @@ def main(argv=None):
 
     stats = aggregate(rows)
     out_path = args.out or dump_path.parent / output_name(as_on)
+
+    design_ref = args.design_ref
+    if design_ref:
+        if not design_ref.exists():
+            raise SystemExit(f"ERROR: design reference not found: {design_ref}")
+        if not args.quiet:
+            print(f"Design layer imported from: {design_ref}")
+        # The hand-made workbook's status table is hand-typed and fixed —
+        # adopt it VERBATIM before the sheets are built so the Calc/Analysis
+        # status rows (and therefore both doughnuts) match the reference
+        # 1:1, zero-count rows and all.
+        donor_rows = donor_status_table(design_ref)
+        if donor_rows:
+            stats["status_table"] = donor_rows
+
     wb = build_workbook(rows, stats, as_on, period_from, period_to)
+
+    if design_ref:
+        import_design_reference(wb, design_ref, stats)
+    if len(rows) + 1 >= FORMULA_ROW_END and not args.quiet:
+        print(f"WARNING: dump has {len(rows)} rows — engine ranges end at row "
+              f"{FORMULA_ROW_END}; extend FORMULA_ROW_END (reference value) "
+              "to cover appended data.")
     wb.save(out_path)
 
     apply_reference_charts(
         str(out_path), stats,
         log=(lambda *_: None) if args.quiet else print,
+        design_ref=design_ref,
     )
 
     if not args.quiet:
