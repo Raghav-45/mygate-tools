@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import zipfile
 from collections import Counter
 from datetime import date, datetime
 from pathlib import Path
@@ -515,12 +516,278 @@ def add_chart(ws, chart, anchor, width, height):
     ws.add_chart(chart, anchor)
 
 
+# ---------------------------------------------------------------------------
+# Exact chart replication — every rendered property (colors, data-label callout
+# boxes with manual layouts, axis fonts/styles, marker shapes, hole sizes,
+# explosion, legend placement, position/sizes of the five charts per sheet) is
+# taken 1:1 from the hand-made reference workbook's chart XML. The openpyxl
+# chart objects above only exist so the package gets its parts; the final
+# archive swap below replaces them with the reference XML, with data ranges and
+# caches adapted to the current dump.
+# ---------------------------------------------------------------------------
+
+TEMPLATE_DIR = Path(__file__).resolve().parent / "chart_templates"
+
+# Excel 1900 date-system: serial 1 = 1900-01-01
+SERIAL_EPOCH = datetime(1899, 12, 30)
+
+SLOT_BY_TITLE = {
+    "Monthly Complaint Volume (filtered)": 1,
+    "By Category (filtered)": 2,
+    "Top Issue Types (filtered)": 3,
+    "Resolution Status (filtered)": 4,
+    "By Phase / Block (filtered)": 5,
+    "Monthly Complaint Volume  (escalation trend)": 6,
+    "Complaints by Category": 7,
+    "Top Issue Types": 8,
+    "Resolution Status": 9,
+    "Complaints by Phase / Block": 10,
+}
+
+
+def _serials(months):
+    return [int((datetime(y, m, 1) - SERIAL_EPOCH).days) for y, m in months]
+
+
+def _esc(text):
+    from xml.sax.saxutils import escape
+
+    return escape(str(text))
+
+
+def _num_cache(format_code, values, pt_count):
+    pts = "".join(
+        f'<c:pt idx="{i}"><c:v>{v}</c:v></c:pt>'
+        for i, v in enumerate(values)
+        if v is not None
+    )
+    return (
+        f'<c:numCache><c:formatCode>{_esc(format_code)}</c:formatCode>'
+        f'<c:ptCount val="{pt_count}"/>{pts}</c:numCache>'
+    )
+
+
+def _str_cache(values, pt_count):
+    pts = "".join(
+        f'<c:pt idx="{i}"><c:v>{_esc(v)}</c:v></c:pt>'
+        for i, v in enumerate(values)
+        if v is not None
+    )
+    return f'<c:strCache><c:ptCount val="{pt_count}"/>{pts}</c:strCache>'
+
+
+def _slot_spec(slot, stats):
+    """(ordered refs, ordered cache xml builders) for a given chart slot."""
+    cats = stats["category_order"]
+    subs = stats["subcat_chart"]
+    stas = stats["status_order"]
+    phs = stats["phase_order"]
+    months = stats["months"]
+    month_counts = [stats["month"].get((y, m), 0) for y, m in months]
+    serials = _serials(months)
+    C, SUB, ST, PH, M = len(cats), len(subs), len(stas), len(phs), len(months)
+
+    # interactive refs include the +1 blank-pad row the reference workbook uses
+    i_cat_row = C + 2
+    i_sub_row = SUB + 2
+    i_stat_row = ST + 2
+    i_phase_row = PH + 2
+    cat_pairs = [(c, stats["category"][c]) for c in cats]
+    sub_pairs = [(s, stats["subcat"][s]) for s in subs]
+    sta_pairs = [(s, stats["status"][s]) for s in stas]
+    pha_pairs = [(p, stats["phase"][p]) for p in phs]
+
+    def labels(pairs):
+        return [k for k, _ in pairs]
+
+    def vals(pairs):
+        return [v for _, v in pairs]
+
+    pad_label = lambda pairs: labels(pairs) + [None]  # noqa: E731
+
+    if slot == 1:
+        refs = [f"Calc!$S$2:$S${1 + M}", f"Calc!$T$2:$T${1 + M}"]
+        caches = [
+            lambda: _num_cache("mmm\\-yy", serials, M),
+            lambda: _num_cache("General", month_counts, M),
+        ]
+    elif slot == 2:
+        refs = [f"Calc!$A$2:$A${i_cat_row}", f"Calc!$B$2:$B${i_cat_row}"]
+        caches = [
+            lambda: _str_cache(pad_label(cat_pairs), C + 1),
+            lambda: _num_cache("General", vals(cat_pairs), C + 1),
+        ]
+    elif slot == 3:
+        refs = [f"Calc!$D$2:$D${i_sub_row}", f"Calc!$E$2:$E${i_sub_row}"]
+        caches = [
+            lambda: _str_cache(pad_label(sub_pairs), SUB + 1),
+            lambda: _num_cache("General", vals(sub_pairs), SUB + 1),
+        ]
+    elif slot == 4:
+        refs = [f"Calc!$G$2:$G${i_stat_row}", f"Calc!$H$2:$H${i_stat_row}"]
+        caches = [
+            lambda: _str_cache(pad_label(sta_pairs), ST + 1),
+            lambda: _num_cache("General", vals(sta_pairs), ST + 1),
+        ]
+    elif slot == 5:
+        refs = [f"Calc!$P$2:$P${i_phase_row}", f"Calc!$Q$2:$Q${i_phase_row}"]
+        caches = [
+            lambda: _str_cache(pad_label(pha_pairs), PH + 1),
+            lambda: _num_cache("General", vals(pha_pairs), PH + 1),
+        ]
+    elif slot == 6:
+        refs = ["Analysis!$E$13", f"Analysis!$D$14:$D${13 + M}",
+                f"Analysis!$E$14:$E${13 + M}"]
+        caches = [
+            lambda: _str_cache(["Count"], 1),
+            lambda: _num_cache("mmm\\-yy", serials, M),
+            lambda: _num_cache("General", month_counts, M),
+        ]
+    elif slot == 7:
+        refs = ["Analysis!$B$2", f"Analysis!$A$3:$A${2 + C}",
+                f"Analysis!$B$3:$B${2 + C}"]
+        caches = [
+            lambda: _str_cache(["Count"], 1),
+            lambda: _str_cache(labels(cat_pairs), C),
+            lambda: _num_cache("General", vals(cat_pairs), C),
+        ]
+    elif slot == 8:
+        refs = ["Analysis!$E$2", f"Analysis!$D$3:$D${2 + SUB}",
+                f"Analysis!$E$3:$E${2 + SUB}"]
+        caches = [
+            lambda: _str_cache(["Count"], 1),
+            lambda: _str_cache(labels(sub_pairs), SUB),
+            lambda: _num_cache("General", vals(sub_pairs), SUB),
+        ]
+    elif slot == 9:
+        refs = ["Analysis!$H$2", f"Analysis!$G$3:$G${2 + ST}",
+                f"Analysis!$H$3:$H${2 + ST}"]
+        caches = [
+            lambda: _str_cache(["Count"], 1),
+            lambda: _str_cache(labels(sta_pairs), ST),
+            lambda: _num_cache("General", vals(sta_pairs), ST),
+        ]
+    elif slot == 10:
+        refs = ["Analysis!$B$13", f"Analysis!$A$14:$A${13 + PH}",
+                f"Analysis!$B$14:$B${13 + PH}"]
+        caches = [
+            lambda: _str_cache(["Count"], 1),
+            lambda: _str_cache(labels(pha_pairs), PH),
+            lambda: _num_cache("General", vals(pha_pairs), PH),
+        ]
+    else:
+        raise ValueError(f"unknown chart slot {slot}")
+    return refs, [c() for c in caches]
+
+
+_F_PAT = re.compile(r"<c:f>[^<]*</c:f>")
+_CACHE_PAT = re.compile(r"<c:(numCache|strCache)>.*?</c:\1>", re.S)
+
+
+def _adapt_template(slot, refs, caches):
+    xml = (TEMPLATE_DIR / f"chart{slot}.xml").read_bytes().decode("utf-8")
+    fs = [f"<c:f>{r}</c:f>" for r in refs]
+    xml = _replace_blocks(xml, _F_PAT, fs)
+    xml = _replace_blocks(xml, _CACHE_PAT, caches)
+    return xml
+
+
+def _replace_blocks(xml, pattern, replacements):
+    it = iter(replacements)
+    n = 0
+
+    def sub(m):
+        nonlocal n
+        n += 1
+        return next(it)
+
+    out = pattern.sub(sub, xml)
+    if n != len(replacements):
+        raise RuntimeError(
+            f"block replace mismatch: {n} vs {len(replacements)}")
+    return out
+
+
+def _drawing_rels_xml(targets):
+    rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart"
+    entries = "".join(
+        f'<Relationship Id="rId{i}" Type="{rel}" Target="../charts/{t}"/>'
+        for i, t in enumerate(targets, start=1)
+    )
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/'
+        f'relationships">{entries}</Relationships>'
+    )
+
+
+def apply_reference_charts(path, stats, log=print):
+    """Rewrite the saved workbook's chart parts and drawing parts so every
+    rendered chart property matches the hand-made reference workbook."""
+    if not TEMPLATE_DIR.is_dir():
+        log("chart templates missing — skipped exact-chart swap")
+        return
+
+    zin = zipfile.ZipFile(path, "r")
+    names = zin.namelist()
+
+    part_by_slot = {}
+    for name in names:
+        m = re.match(r"xl/charts/chart\d+\.xml$", name)
+        if m:
+            blob = zin.read(name)
+            first = blob[: blob.rfind(b"</c:title>")]
+            tm = re.search(rb"<a:t>([^<]*)</a:t>", first)
+            title = tm.group(1).decode("utf-8") if tm else ""
+            slot = SLOT_BY_TITLE.get(title)
+            if slot is None:
+                raise RuntimeError(f"unexpected chart title: {title!r}")
+            part_by_slot[slot] = name.rsplit("/", 1)[-1]
+
+    expected = set(range(1, 11))
+    got = set(part_by_slot)
+    if got != expected:
+        raise RuntimeError(f"chart slot mapping incomplete: {got}")
+
+    replacements = {}
+    for slot, part in part_by_slot.items():
+        refs, caches = _slot_spec(slot, stats)
+        replacements[f"xl/charts/{part}"] = _adapt_template(
+            slot, refs, caches).encode("utf-8")
+
+    # drawings — reference twoCellAnchors verbatim, rels point at our parts
+    replacements["xl/drawings/drawing1.xml"] = (
+        TEMPLATE_DIR / "drawing1.xml").read_bytes()
+    replacements["xl/drawings/drawing2.xml"] = (
+        TEMPLATE_DIR / "drawing2.xml").read_bytes()
+    replacements["xl/drawings/_rels/drawing1.xml.rels"] = \
+        _drawing_rels_xml([part_by_slot[s] for s in range(1, 6)]).encode("utf-8")
+    replacements["xl/drawings/_rels/drawing2.xml.rels"] = \
+        _drawing_rels_xml([part_by_slot[s] for s in range(6, 11)]).encode("utf-8")
+
+    tmp = str(path) + ".tmp"
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+        for name in names:
+            zout.writestr(
+                name, replacements.get(name) or zin.read(name))
+    zin.close()
+    Path(tmp).replace(path)
+
+
 # --- Data sheet -------------------------------------------------------------
+
+def apply_sheet_defaults(ws):
+    """Matching sheetFormatPr defaults with the hand-made reference workbook."""
+    ws.sheet_format.baseColWidth = None
+    ws.sheet_format.defaultColWidth = 8.7265625
+    ws.sheet_format.defaultRowHeight = 14.5
+
 
 def build_data_sheet(wb, rows):
     ws = wb.create_sheet("Data")
     ws.sheet_view.showGridLines = False
     ws.freeze_panes = "A2"
+    apply_sheet_defaults(ws)
     for c, h in enumerate(DATA_HEADERS, start=1):
         cell = ws.cell(1, c, h)
         cell.fill = _fill(NAVY)
@@ -570,6 +837,7 @@ def build_data_sheet(wb, rows):
 def build_calc_sheet(wb, stats, frows=FORMULA_ROW_END):
     ws = wb["Calc"]
     ws.sheet_state = "hidden"
+    apply_sheet_defaults(ws)
 
     ws["M1"] = "phaseCrit"
     ws["N1"] = '=IF(Interactive!$C$5="All","*",Interactive!$C$5)'
@@ -650,6 +918,7 @@ FILTER_CELLS = [("C4", "Phase", "C5"), ("F4", "Status", "F5"),
 def build_interactive(wb, stats, as_on):
     ws = wb["Interactive"]
     ws.sheet_view.showGridLines = False
+    apply_sheet_defaults(ws)
     phase_order = stats["phase_order"]
     status_order = stats["status_order"]
     subcat_filter = stats["subcat_filter"]
@@ -721,16 +990,16 @@ def build_interactive(wb, stats, as_on):
         "I5": "SubCategoryFilterList",
         "L5": '"All,' + ",".join(category_order) + '"',
     }
+    ws.merge_cells("L5:M5")  # category dropdown spans two columns, as in the reference
     for cell, formula in lists.items():
         dv = DataValidation(type="list", formula1=formula, allow_blank=True)
         dv.add(cell)
-        if cell == "L5":
-            dv.add("M5")
         ws.add_data_validation(dv)
 
-    for col, w in {"A": 2.0, "B": 15.0, "D": 2.0, "E": 20.43, "F": 16.71, "G": 2.0,
-                   "H": 15.0, "I": 22.29, "J": 2.0, "K": 4.29, "L": 21.71,
-                   "M": 7.57, "N": 2.0}.items():
+    for col, w in {"A": 2.0, "B": 15.0, "C": 15.0, "D": 2.0,
+                   "E": 20.453125, "F": 16.7265625, "G": 2.0,
+                   "H": 15.0, "I": 22.26953125, "J": 2.0, "K": 4.26953125,
+                   "L": 21.7265625, "M": 7.54296875, "N": 2.0}.items():
         ws.column_dimensions[col].width = w
 
     calc = wb["Calc"]
@@ -779,6 +1048,7 @@ def build_interactive(wb, stats, as_on):
 def build_overview(wb, stats, as_on, period_from, period_to):
     ws = wb["Overview (static)"]
     ws.sheet_view.showGridLines = False
+    apply_sheet_defaults(ws)
     analysis = wb["Analysis"]
 
     ws.merge_cells("B2:N2")
@@ -825,8 +1095,14 @@ def build_overview(wb, stats, as_on, period_from, period_to):
     ws.row_dimensions[6].height = 33.75
     ws.row_dimensions[7].height = 21.75
 
-    for col, w in {"A": 2.0, "B": 16.0, "H": 2.0, "I": 16.0, "O": 2.0}.items():
+    for col, w in {"A": 2.0, "B": 16.0, "C": 16.0, "D": 16.0, "E": 16.0, "F": 16.0,
+                   "G": 16.0, "H": 2.0, "I": 16.0, "J": 16.0, "K": 16.0, "L": 16.0,
+                   "M": 16.0, "N": 16.0, "O": 2.0, "P": 2.0, "Q": 2.0, "R": 2.0}.items():
         ws.column_dimensions[col].width = w
+
+    # Vestigial empty merge blocks the hand-made file keeps on rows 5-7 (K:L, M:N)
+    for block in ("K5:L5", "K6:L6", "K7:L7", "M5:N5", "M6:N6", "M7:N7"):
+        ws.merge_cells(block)
 
     n_months = len(stats["months"])
     n_phase = len(stats["phase_order"])
@@ -874,6 +1150,7 @@ def build_overview(wb, stats, as_on, period_from, period_to):
 def build_analysis(wb, stats, frows=FORMULA_ROW_END):
     ws = wb["Analysis"]
     ws.sheet_view.showGridLines = False
+    apply_sheet_defaults(ws)
     rng = {
         "cat": f"Data!$E$2:$E${frows}",
         "sub": f"Data!$F$2:$F${frows}",
@@ -928,12 +1205,12 @@ def build_analysis(wb, stats, frows=FORMULA_ROW_END):
     section(8, 7, stats["status_order"],
             "=COUNTIF({status},G{{i}})".format(status=rng["status"]), 3)
     # DLP cannot be derived from the dump (MyGate provides no purchase dates).
-    # The hand-made workbook kept this section broken with #REF! formulas.
-    ws["J3"] = "Not Specified"
-    ws["J3"].font = body_font
-    ws["K3"] = f"=COUNTA(Data!$B$2:$B${frows})"
-    ws["K3"].font = body_font
-    ws["K3"].alignment = center
+    # Replicated verbatim from the hand-made workbook, broken #REF! formulas included.
+    for i, label in ((3, "Out Of DLP"), (4, "Under DLP")):
+        ws.cell(i, 10, label).font = body_font
+        ccell = ws.cell(i, 11, f"=COUNTIF(Data!#REF!,J{i})")
+        ccell.font = body_font
+        ccell.alignment = center
     section(2, 1, stats["phase_order"],
             "=COUNTIF({phase},A{{i}})".format(phase=rng["phase"]), 14)
     for i, (y, m) in enumerate(stats["months"], start=14):
@@ -951,8 +1228,8 @@ def build_analysis(wb, stats, frows=FORMULA_ROW_END):
     for col, w in {"A": 26.0, "B": 10.0, "D": 26.0, "E": 10.0, "G": 26.0, "H": 10.0,
                    "J": 26.0, "K": 10.0}.items():
         ws.column_dimensions[col].width = w
-    ws.column_dimensions["J"].hidden = True
-    ws.column_dimensions["K"].hidden = True
+    ws.row_dimensions[1].height = 15.5
+    ws.row_dimensions[12].height = 15.5
     return ws
 
 
@@ -1045,6 +1322,11 @@ def main(argv=None):
     out_path = args.out or dump_path.parent / output_name(as_on)
     wb = build_workbook(rows, stats, as_on, period_from, period_to)
     wb.save(out_path)
+
+    apply_reference_charts(
+        str(out_path), stats,
+        log=(lambda *_: None) if args.quiet else print,
+    )
 
     if not args.quiet:
         dated = [r["date"] for r in rows if r["date"]]
