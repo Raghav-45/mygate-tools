@@ -98,7 +98,9 @@ DEFAULT_PERIOD_FROM = date(2024, 1, 1)
 # very constants below, so they are kept verbatim to stay byte-comparable with
 # the reference (a dump larger than FORMULA_ROW_END rows would need a bump).
 FORMULA_ROW_END = 9752        # engine + Overview cards + Analysis table feed;
-SUBCAT_CHART_ROWS = 10        # Analysis/Overview show a fixed Top-10 sub list
+SUBCAT_CHART_ROWS = 12        # Analysis/Overview sub list; equals the Calc
+                              # table (12 rows) so every sub chart shows the
+                              # exact same top-12 list everywhere
 
 DATA_HEADERS = [
     "Sr No.",
@@ -117,6 +119,11 @@ MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 STATUS_ORDER_FALLBACK = ["In Progress", "Reopened", "New", "On Hold"]
+# Fixed doughnut rows — the hand-made dashboard's four always-present slices,
+# in her order. Zero rows (Repeated, or On Hold when the dump has none) stay
+# on the picture so snapshots stay comparable. Her "HOLD" row keeps counting
+# the dump's "On Hold" value — corrected spelling, no live tickets dropped.
+STATUS_PIE_ROWS = ["In Progress", "Reopened", "On Hold", "Repeated"]
 
 
 # ---------------------------------------------------------------------------
@@ -344,14 +351,17 @@ def aggregate(rows):
 
     # Canonical status order from the data — feeds the filter dropdown, the V
     # KPI cards and every status literal. The *display* tables (Calc G/H,
-    # Analysis G/H) use stats["status_table"] instead: the hand-made reference
-    # keeps those rows fixed regardless of the data (donor files read
-    # "In Progress, Reopened, HOLD, Repeated" even when the dump has "On
-    # Hold"), which is what makes her doughnuts show four always-included
-    # slices. aggregate() defaults it to the data order; main() overrides it
-    # verbatim from the design reference when one is given.
+    # Analysis G/H) use stats["status_table"] instead: a FIXED four-row table
+    # (STATUS_PIE_ROWS) so the doughnuts keep the same always-included slices
+    # on every snapshot, including zero rows like Repeated — exactly what the
+    # hand-made reference does with her hand-typed table. Extra statuses the
+    # dump genuinely contains are appended so live rows are never dropped.
+    # main() still overrides it verbatim from the design reference when one
+    # is explicitly given.
     stats["status_order"] = desc(stats["status"]) or list(STATUS_ORDER_FALLBACK)
-    stats["status_table"] = list(stats["status_order"])
+    pie_rows = list(STATUS_PIE_ROWS)
+    pie_rows += [s for s in stats["status_order"] if s not in pie_rows]
+    stats["status_table"] = pie_rows
     stats["category_order"] = desc(stats["category"])
     stats["phase_order"] = desc(stats["phase"])
 
@@ -602,6 +612,11 @@ def _slot_spec(slot, stats):
     serials = _serials(months)
     C, SUB, ST, PH, M = len(cats), len(subs), len(stas), len(phs), len(months)
 
+    # Analysis band-2 geometry (Phase / Monthly tables). build_analysis stores
+    # the computed (title, header, body) rows in stats; the legacy fallback
+    # keeps the pre-redesign rows for callers that skipped build_analysis.
+    _a_title2, _a_hdr2, _a_body2 = stats.get("analysis_rows") or (12, 13, 14)
+
     # interactive refs include the +1 blank-pad row the reference workbook uses
     i_cat_row = C + 2
     i_sub_row = SUB + 2
@@ -657,8 +672,9 @@ def _slot_spec(slot, stats):
             lambda: _num_cache("General", vals(pha_pairs), PH + 1),
         ]
     elif slot == 6:
-        refs = ["Analysis!$E$13", f"Analysis!$D$14:$D${13 + M}",
-                f"Analysis!$E$14:$E${13 + M}"]
+        hdr, b0 = _a_hdr2, _a_body2
+        refs = [f"Analysis!$E${hdr}", f"Analysis!$D${b0}:$D${hdr + M}",
+                f"Analysis!$E${b0}:$E${hdr + M}"]
         caches = [
             lambda: _str_cache(["Count"], 1),
             lambda: _num_cache("mmm\\-yy", serials, M),
@@ -689,8 +705,9 @@ def _slot_spec(slot, stats):
             lambda: _num_cache("General", vals(sta_pairs), ST),
         ]
     elif slot == 10:
-        refs = ["Analysis!$B$13", f"Analysis!$A$14:$A${13 + PH}",
-                f"Analysis!$B$14:$B${13 + PH}"]
+        hdr, b0 = _a_hdr2, _a_body2
+        refs = [f"Analysis!$B${hdr}", f"Analysis!$A${b0}:$A${hdr + PH}",
+                f"Analysis!$B${b0}:$B${hdr + PH}"]
         caches = [
             lambda: _str_cache(["Count"], 1),
             lambda: _str_cache(labels(pha_pairs), PH),
@@ -1231,14 +1248,14 @@ def build_interactive(wb, stats, as_on):
     subcat_filter = stats["subcat_filter"]
     category_order = stats["category_order"]
 
-    ws.merge_cells("B2:M2")
+    ws.merge_cells("B2:O2")
     ws["B2"] = f"{BRAND}  —  Interactive Complaints Dashboard"
     ws["B2"].fill = _fill(NAVY)
     ws["B2"].font = Font(name="Arial", size=17, bold=True, color="FFFFFF")
     ws["B2"].alignment = Alignment(horizontal="left", vertical="center")
     ws.row_dimensions[2].height = 31.5
 
-    ws.merge_cells("B3:M3")
+    ws.merge_cells("B3:O3")
     ws["B3"] = (
         "Use the Phase / Status / Sub Category / Category filters below — every KPI "
         "and chart updates to match your selection.  Source: MyGate export "
@@ -1246,14 +1263,17 @@ def build_interactive(wb, stats, as_on):
     )
     ws["B3"].font = Font(name="Arial", size=9, color=SUBTLE_TEXT)
 
+    # KPI card grid: five cards, each exactly two 13-wide columns, separated by
+    # a uniform 3-wide spacer column (D/G/J/M). The chart bands below anchor to
+    # the same column boundaries, so cards and charts share one grid.
     cards = [
         ("B", "C", "FILTERED TOTAL", "=Calc!$V$1", "General",
          "complaints in view", NAVY),
-        ("D", "E", "% OF ALL", "=Calc!$V$1/Calc!$V$7", "0.0%",
+        ("E", "F", "% OF ALL", "=Calc!$V$1/Calc!$V$7", "0.0%",
          '="share of "&TEXT(Calc!$V$7,"#,##0")', MID_BLUE),
-        ("F", "G", "IN PROGRESS", "=Calc!$V$2", "General", "open", BLUE),
-        ("H", "I", "REOPENED", "=Calc!$V$3", "General", "closed but returned", RED),
-        ("K", "L", "TOP ISSUE COUNT", "=Calc!$V$5", "General",
+        ("H", "I", "IN PROGRESS", "=Calc!$V$2", "General", "open", BLUE),
+        ("K", "L", "REOPENED", "=Calc!$V$3", "General", "closed but returned", RED),
+        ("N", "O", "TOP ISSUE COUNT", "=Calc!$V$5", "General",
          "=INDEX(Calc!$D$2:$D$13,MATCH(Calc!$V$5,Calc!$E$2:$E$13,0))", PURPLE),
     ]
     for col, right, label, formula, fmt, nine, color in cards:
@@ -1299,16 +1319,15 @@ def build_interactive(wb, stats, as_on):
         "I5": "SubCategoryFilterList",
         "L5": '"All,' + ",".join(category_order) + '"',
     }
-    ws.merge_cells("L5:M5")  # category dropdown spans two columns, as in the reference
     for cell, formula in lists.items():
         dv = DataValidation(type="list", formula1=formula, allow_blank=True)
         dv.add(cell)
         ws.add_data_validation(dv)
 
-    for col, w in {"A": 2.0, "B": 15.0, "C": 15.0, "D": 2.0,
-                   "E": 20.453125, "F": 16.7265625, "G": 2.0,
-                   "H": 15.0, "I": 22.26953125, "J": 2.0, "K": 4.26953125,
-                   "L": 21.7265625, "M": 7.54296875, "N": 2.0}.items():
+    # Uniform grid: five 13-wide card columns, four 3-wide spacer columns.
+    for col, w in {"A": 2.0, "B": 13.0, "C": 13.0, "D": 3.0, "E": 13.0, "F": 13.0,
+                   "G": 3.0, "H": 13.0, "I": 13.0, "J": 3.0, "K": 13.0,
+                   "L": 13.0, "M": 3.0, "N": 13.0, "O": 13.0, "P": 2.0}.items():
         ws.column_dimensions[col].width = w
 
     calc = wb["Calc"]
@@ -1317,38 +1336,42 @@ def build_interactive(wb, stats, as_on):
     n_phase = len(stats["phase_order"])
     n_subcat = max(len(stats["subcat_chart"]), 12)
 
+    # Chart bands share the card grid. Band rows: 11-23 (trend, full width),
+    # gap row 24, 25-37 (category + sub, halves B..I / K..O), gap row 38,
+    # 39-51 (doughnut + phase, same halves). Row 10 is the single spacer row
+    # under the cards — every gap in the sheet is exactly one default row.
     add_chart(ws, line_chart(
         "Monthly Complaint Volume (filtered)",
         Reference(calc, min_col=19, min_row=2, max_row=1 + n_months),
         Reference(calc, min_col=20, min_row=2, max_row=1 + n_months),
-    ), "B11", span_cm(ws, 1, 12, 0, 52), span_cm_v(ws, 10, 22, 0, 17))
+    ), "B11", span_cm(ws, 0, 14, 0, 0), span_cm_v(ws, 9, 22, 0, 0))
 
     add_chart(ws, bar_chart(
         "By Category (filtered)",
         Reference(calc, min_col=1, min_row=2, max_row=1 + len(category_order) + 1),
         Reference(calc, min_col=2, min_row=2, max_row=1 + len(category_order) + 1),
         CHART_BAR_CATEGORY,
-    ), "B24", span_cm(ws, 1, 6, 0, 8), span_cm_v(ws, 23, 36, 1, 6))
+    ), "B25", span_cm(ws, 0, 8, 0, 0), span_cm_v(ws, 23, 36, 0, 0))
 
     add_chart(ws, bar_chart(
         "Top Issue Types (filtered)",
         Reference(calc, min_col=4, min_row=2, max_row=1 + n_subcat),
         Reference(calc, min_col=5, min_row=2, max_row=1 + n_subcat),
         CHART_BAR_TOP,
-    ), "H24", span_cm(ws, 7, 13, 1, 0), span_cm_v(ws, 23, 36, 1, 6))
+    ), "K25", span_cm(ws, 9, 14, 0, 0), span_cm_v(ws, 23, 36, 0, 0))
 
     add_chart(ws, doughnut_chart(
         "Resolution Status (filtered)",
         Reference(calc, min_col=7, min_row=2, max_row=1 + n_status),
         Reference(calc, min_col=8, min_row=2, max_row=1 + n_status),
-    ), "B37", span_cm(ws, 0, 6, 13, 9), span_cm_v(ws, 36, 48, 9, 9))
+    ), "B39", span_cm(ws, 0, 8, 0, 0), span_cm_v(ws, 37, 50, 0, 0))
 
     add_chart(ws, bar_chart(
         "By Phase / Block (filtered)",
         Reference(calc, min_col=16, min_row=2, max_row=1 + n_phase),
         Reference(calc, min_col=17, min_row=2, max_row=1 + n_phase),
         None, vary=True,
-    ), "H37", span_cm(ws, 7, 13, 1, 0), span_cm_v(ws, 36, 48, 9, 9))
+    ), "K39", span_cm(ws, 9, 14, 0, 0), span_cm_v(ws, 37, 50, 0, 0))
     return ws
 
 
@@ -1360,14 +1383,14 @@ def build_overview(wb, stats, as_on, period_from, period_to):
     apply_sheet_defaults(ws)
     analysis = wb["Analysis"]
 
-    ws.merge_cells("B2:N2")
+    ws.merge_cells("B2:L2")
     ws["B2"] = f"{BRAND}  —  Complaints Analytics Dashboard"
     ws["B2"].fill = _fill(NAVY)
     ws["B2"].font = Font(name="Arial", size=18, bold=True, color="FFFFFF")
     ws["B2"].alignment = Alignment(horizontal="left", vertical="center")
     ws.row_dimensions[2].height = 33.75
 
-    ws.merge_cells("B3:N3")
+    ws.merge_cells("B3:L3")
     ws["B3"] = (
         f"MyGate Help Desk Report  |  Reporting period: {fmt_short(period_from)} to "
         f"{fmt_short(period_to)}  |  Source: MyGate complaints export "
@@ -1376,19 +1399,19 @@ def build_overview(wb, stats, as_on, period_from, period_to):
     ws["B3"].font = Font(name="Arial", size=10, color=SUBTLE_TEXT)
     ws.row_dimensions[3].height = 18.0
 
-    st = stats["status"]
-    # KPI values are live COUNTA/COUNTIF formulas over the Data sheet — exactly
-    # like the hand-made dashboard's Overview cards (no static numbers).
+    # KPI card grid: four cards, each exactly two 16-wide columns, separated
+    # by a uniform 3-wide spacer column (D/G/J). Charts below anchor to the
+    # same boundaries (B..F and H..L halves split exactly on a spacer).
     cards = [
         ("B", "C", "TOTAL COMPLAINTS",
          f"=COUNTA(Data!$B$2:$B${FORMULA_ROW_END})", "All logged tickets", NAVY),
-        ("D", "E", "OPEN / IN PROGRESS",
+        ("E", "F", "OPEN / IN PROGRESS",
          f'=COUNTIF(Data!$J$2:$J${FORMULA_ROW_END},"In Progress")',
          "Awaiting resolution", MID_BLUE),
-        ("F", "G", "REOPENED",
+        ("H", "I", "REOPENED",
          f'=COUNTIF(Data!$J$2:$J${FORMULA_ROW_END},"Reopened")',
          "Returned after closure", RED),
-        ("I", "J", "ON HOLD",
+        ("K", "L", "ON HOLD",
          f'=COUNTIF(Data!$J$2:$J${FORMULA_ROW_END},"On Hold")',
          "Held by Projects", GOLD),
     ]
@@ -1412,53 +1435,58 @@ def build_overview(wb, stats, as_on, period_from, period_to):
     ws.row_dimensions[6].height = 33.75
     ws.row_dimensions[7].height = 21.75
 
-    for col, w in {"A": 2.0, "B": 16.0, "C": 16.0, "D": 16.0, "E": 16.0, "F": 16.0,
-                   "G": 16.0, "H": 2.0, "I": 16.0, "J": 16.0, "K": 16.0, "L": 16.0,
-                   "M": 16.0, "N": 16.0, "O": 2.0, "P": 2.0, "Q": 2.0, "R": 2.0}.items():
+    # Uniform grid: four 16-wide card columns, three 3-wide spacer columns.
+    for col, w in {"A": 2.0, "B": 16.0, "C": 16.0, "D": 3.0, "E": 16.0, "F": 16.0,
+                   "G": 3.0, "H": 16.0, "I": 16.0, "J": 3.0, "K": 16.0,
+                   "L": 16.0, "M": 2.0}.items():
         ws.column_dimensions[col].width = w
-
-    # Vestigial empty merge blocks the hand-made file keeps on rows 5-7 (K:L, M:N)
-    for block in ("K5:L5", "K6:L6", "K7:L7", "M5:N5", "M6:N6", "M7:N7"):
-        ws.merge_cells(block)
 
     n_months = len(stats["months"])
     n_phase = len(stats["phase_order"])
     n_cat = len(stats["category_order"])
     n_sub = len(stats["subcat_chart"])
     n_status = len(stats.get("status_table") or stats["status_order"])
+    _, _, analysis_body_row = stats.get("analysis_rows", (12, 13, 14))
 
+    # Chart bands share the card grid: full-width trend rows 9-22, gap row 23,
+    # then rows 24-37 and 39-51 split exactly on the spacer into B..F / H..L
+    # halves, gap row 38 between. Same single-row gap rhythm as Interactive.
     add_chart(ws, line_chart(
         "Monthly Complaint Volume  (escalation trend)",
-        Reference(analysis, min_col=4, min_row=14, max_row=13 + n_months),
-        Reference(analysis, min_col=5, min_row=14, max_row=13 + n_months),
-    ), "A8", span_cm(ws, 0, 9, 14, 111), span_cm_v(ws, 7, 21, 7, 11))
+        Reference(analysis, min_col=4, min_row=analysis_body_row,
+                  max_row=analysis_body_row - 1 + n_months),
+        Reference(analysis, min_col=5, min_row=analysis_body_row,
+                  max_row=analysis_body_row - 1 + n_months),
+    ), "B9", span_cm(ws, 0, 11, 0, 0), span_cm_v(ws, 7, 21, 0, 0))
 
     add_chart(ws, bar_chart(
         "Complaints by Category",
         Reference(analysis, min_col=1, min_row=3, max_row=2 + n_cat),
         Reference(analysis, min_col=2, min_row=3, max_row=2 + n_cat),
         CHART_BAR_CATEGORY,
-    ), "B22", span_cm(ws, 1, 5, 6, 19), span_cm_v(ws, 21, 35, 15, 19))
+    ), "B24", span_cm(ws, 0, 5, 0, 0), span_cm_v(ws, 22, 36, 0, 0))
 
     add_chart(ws, bar_chart(
         "Top Issue Types",
         Reference(analysis, min_col=4, min_row=3, max_row=2 + n_sub),
         Reference(analysis, min_col=5, min_row=3, max_row=2 + n_sub),
         CHART_BAR_TOP,
-    ), "F22", span_cm(ws, 5, 10, 25, 1), span_cm_v(ws, 21, 35, 15, 19))
+    ), "H24", span_cm(ws, 6, 11, 0, 0), span_cm_v(ws, 22, 36, 0, 0))
 
     add_chart(ws, doughnut_chart(
         "Resolution Status",
         Reference(analysis, min_col=7, min_row=3, max_row=2 + n_status),
         Reference(analysis, min_col=8, min_row=3, max_row=2 + n_status),
-    ), "B37", span_cm(ws, 1, 5, 7, 18), span_cm_v(ws, 36, 50, 0, 4))
+    ), "B39", span_cm(ws, 0, 5, 0, 0), span_cm_v(ws, 37, 50, 0, 0))
 
     add_chart(ws, bar_chart(
         "Complaints by Phase / Block",
-        Reference(analysis, min_col=1, min_row=14, max_row=13 + n_phase),
-        Reference(analysis, min_col=2, min_row=14, max_row=13 + n_phase),
+        Reference(analysis, min_col=1, min_row=analysis_body_row,
+                  max_row=analysis_body_row - 1 + n_phase),
+        Reference(analysis, min_col=2, min_row=analysis_body_row,
+                  max_row=analysis_body_row - 1 + n_phase),
         None, vary=True,
-    ), "F37", span_cm(ws, 5, 10, 26, 0), span_cm_v(ws, 36, 50, 0, 4))
+    ), "H39", span_cm(ws, 6, 11, 0, 0), span_cm_v(ws, 37, 50, 0, 0))
     return ws
 
 
@@ -1476,79 +1504,105 @@ def build_analysis(wb, stats, frows=FORMULA_ROW_END):
         "date": f"Data!$D$2:$D${frows}",
     }
 
-    titles = {
-        "A1": "Complaints by Category",
-        "D1": "Top Issue Types (Sub-Category)",
-        "G1": "By Resolution Status",
-        "J1": "Defect Liability Period (DLP) Status",
-        "A12": "Complaints by Phase / Block",
-        "D12": "Monthly Complaint Trend",
-    }
-    for ref, txt in titles.items():
+    cats = stats["category_order"]
+    subs = stats["subcat_chart"][:SUBCAT_CHART_ROWS]
+    stas = stats.get("status_table") or stats["status_order"]
+    phs = stats["phase_order"]
+    months = stats["months"]
+
+    # One uniform band layout for the entire sheet. Band 1 (title row 1,
+    # header row 2, body from row 3) holds Category / Sub-Category / Status
+    # plus the DLP manual-entry block (rows 3-5). Band 2 (Phase / Monthly
+    # Trend) starts two rows below whatever band 1 actually needs, so its
+    # title can never be overwritten by band 1's longer lists (the old fixed
+    # rows 12-14 clobbered each other whenever the sub list filled up).
+    band1_end = max(2 + len(cats), 2 + len(subs), 2 + len(stas), 5)
+    title2_row = band1_end + 2
+    header2_row = title2_row + 1
+    body2_row = header2_row + 1
+    stats["analysis_rows"] = (title2_row, header2_row, body2_row)
+
+    for ref, txt in [
+        ("A1", "Complaints by Category"),
+        ("D1", "Top Issue Types (Sub-Category)"),
+        ("G1", "By Resolution Status"),
+        ("J1", "Defect Liability Period (DLP) Status"),
+        (f"A{title2_row}", "Complaints by Phase / Block"),
+        (f"D{title2_row}", "Monthly Complaint Trend"),
+    ]:
         ws[ref] = txt
         ws[ref].font = Font(name="Arial", size=12, bold=True, color=NAVY)
+        ws.row_dimensions[int(ref[1:])].height = 15.5
 
     for ref, txt in [
         ("A2", "Category"), ("B2", "Count"),
         ("D2", "Sub-Category"), ("E2", "Count"),
         ("G2", "Status"), ("H2", "Count"),
         ("J2", "DLP Status"), ("K2", "Count"),
-        ("A13", "Phase"), ("B13", "Count"),
-        ("D13", "Month"), ("E13", "Count"),
+        (f"A{header2_row}", "Phase"), (f"B{header2_row}", "Count"),
+        (f"D{header2_row}", "Month"), (f"E{header2_row}", "Count"),
     ]:
-        ws[ref] = txt
-        ws[ref].fill = _fill(MID_BLUE)
-        ws[ref].font = Font(name="Arial", size=11, bold=True, color="FFFFFF")
-        ws[ref].alignment = Alignment(
+        cell = ws[ref]
+        cell.value = txt
+        cell.fill = _fill(MID_BLUE)
+        cell.font = Font(name="Arial", size=11, bold=True, color="FFFFFF")
+        cell.alignment = Alignment(
             horizontal="center", vertical="center", wrap_text=True
         )
-        ws[ref].border = data_border
+        cell.border = data_border
 
+    # One identical column treatment for every section: tinted label column,
+    # plain count column, the same thin grey box grid on every cell, labels
+    # left with an indent, counts centred. Nothing is coloured by accident.
     body_font = Font(name="Arial", size=10)
-    center = Alignment(horizontal="center")
+    label_align = Alignment(horizontal="left", vertical="center", indent=1)
+    count_align = Alignment(horizontal="center", vertical="center")
+    label_fill = PatternFill("solid", fgColor="FFF2F6FC")
 
-    def section(count_col, label_col, values, formula_tpl, start_row):
-        for i, v in enumerate(values, start=start_row):
-            cell = ws.cell(i, label_col, v)
-            cell.font = body_font
-            ccell = ws.cell(i, count_col, formula_tpl.format(i=i))
-            ccell.font = body_font
-            ccell.alignment = center
-
-    section(2, 1, stats["category_order"],
-            "=COUNTIF({cat},A{{i}})".format(cat=rng["cat"]), 3)
-    section(5, 4, stats["subcat_chart"][:SUBCAT_CHART_ROWS],
-            "=COUNTIF({sub},D{{i}})".format(sub=rng["sub"]), 3)
-    section(8, 7, stats.get("status_table") or stats["status_order"],
-            "=COUNTIF({status},G{{i}})".format(status=rng["status"]), 3)
-    # DLP cannot be derived from the dump (MyGate provides no purchase dates).
-    # Replicated verbatim from the hand-made workbook, broken #REF! formulas
-    # included — the reference writes three DLP rows (Out Of / Under / Not
-    # Specified), the third with an equally broken #REF! formula.
-    for i, label in ((3, "Out Of DLP"), (4, "Under DLP"), (5, "Not Specified")):
-        ws.cell(i, 10, label).font = body_font
-        ccell = ws.cell(i, 11, f"=COUNTIF(Data!#REF!,J{i})")
+    def styled(i, label_col, label_value, count_formula,
+               count_fmt=None, label_fmt=None):
+        lc = ws.cell(i, label_col, label_value)
+        lc.font = body_font
+        lc.fill = label_fill
+        lc.border = data_border
+        lc.alignment = label_align
+        if label_fmt:
+            lc.number_format = label_fmt
+        ccell = ws.cell(i, label_col + 1, count_formula)
         ccell.font = body_font
-        ccell.alignment = center
-    section(2, 1, stats["phase_order"],
-            "=COUNTIF({phase},A{{i}})".format(phase=rng["phase"]), 14)
-    for i, (y, m) in enumerate(stats["months"], start=14):
-        mcell = ws.cell(i, 4, date(y, m, 1))
-        mcell.number_format = "mmm-yy"
-        mcell.font = body_font
-        ccell = ws.cell(
-            i, 5,
+        ccell.border = data_border
+        ccell.alignment = count_align
+        if count_fmt:
+            ccell.number_format = count_fmt
+
+    for i, v in enumerate(cats, start=3):
+        styled(i, 1, v, f"=COUNTIF({rng['cat']},A{i})")
+    for i, v in enumerate(subs, start=3):
+        styled(i, 4, v, f"=COUNTIF({rng['sub']},D{i})")
+    for i, v in enumerate(stas, start=3):
+        styled(i, 7, v, f"=COUNTIF({rng['status']},G{i})")
+    # DLP cannot be computed from the dump (MyGate provides no purchase or
+    # possession dates), and the formulas this section carried in the old
+    # file pointed at a deleted range and showed #REF! errors on open.
+    # The section stays — with the same three rows — but the counts are
+    # readable dashes instead of live errors. Type real numbers over them
+    # if you have them from site records; the styling matches every other
+    # section either way.
+    for i, label in enumerate(("Out Of DLP", "Under DLP", "Not Specified"), start=3):
+        styled(i, 10, label, "—")
+    for i, v in enumerate(phs, start=body2_row):
+        styled(i, 1, v, f"=COUNTIF({rng['phase']},A{i})")
+    for i, (y, m) in enumerate(months, start=body2_row):
+        styled(
+            i, 4, date(y, m, 1),
             f'=COUNTIFS({rng["date"]},">="&DATE({y},{m},1),'
             f'{rng["date"]},"<"&EDATE(DATE({y},{m},1),1))',
+            label_fmt="mmm-yy",
         )
-        ccell.font = body_font
-        ccell.alignment = center
 
-    for col, w in {"A": 26.0, "B": 10.0, "D": 26.0, "E": 10.0, "G": 26.0, "H": 10.0,
-                   "J": 26.0, "K": 10.0}.items():
+    for col, w in {"A": 26.0, "B": 10.0, "C": 3.0, "D": 26.0, "E": 10.0, "F": 3.0,
+                   "G": 26.0, "H": 10.0, "I": 3.0, "J": 26.0, "K": 10.0}.items():
         ws.column_dimensions[col].width = w
-    ws.row_dimensions[1].height = 15.5
-    ws.row_dimensions[12].height = 15.5
     return ws
 
 

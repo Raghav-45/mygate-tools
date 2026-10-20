@@ -15,7 +15,9 @@ Two layers:
    found at $MYGATE_REF_DIR (default: the Downloads folder with the dumps).
    - test_golden_nikhil_data_roundtrip: the input feed is reconstructed from
      the exact rows Nikhil's file contains, so the generated dashboard must
-     match his file 1:1 (same 852 rows, same Data sheet, same engine).
+     match his file 1:1 on the data layer (same 852 rows, same Data sheet, same
+      engine). The card/chart layout is deliberately our own uniform-grid design
+      now, so layout parity is not tested — only our own invariants.
    - test_golden_real_dump_integration: feeding the actual
      MyGate_Master_Helpdesk_Dump_2024-01-01_to_2026-09-22.xlsx must produce a
      Data sheet that agrees with Nikhil's on every row the two snapshots
@@ -201,12 +203,18 @@ def test_mini_dashboards_structure(mini):
     assert "SubCategoryFilterList" in wb.defined_names
     # KPI engine formulas
     ws = wb["Interactive"]
-    assert ws["B8"].value == "=Calc!$V$1"
-    assert ws["D8"].value == "=Calc!$V$1/Calc!$V$7"
-    assert ws["F8"].value == "=Calc!$V$2"
-    assert ws["H8"].value == "=Calc!$V$3"
-    assert ws["K8"].value == "=Calc!$V$5"
-    assert ws["B8"].value != ""
+    # KPI engine formulas (cards live on the uniform grid B:C E:F H:I K:L N:O)
+    assert ws["B7"].value == "FILTERED TOTAL" and ws["B8"].value == "=Calc!$V$1"
+    assert ws["E7"].value == "% OF ALL" and ws["E8"].value == "=Calc!$V$1/Calc!$V$7"
+    assert ws["H7"].value == "IN PROGRESS" and ws["H8"].value == "=Calc!$V$2"
+    assert ws["K7"].value == "REOPENED" and ws["K8"].value == "=Calc!$V$3"
+    assert ws["N7"].value == "TOP ISSUE COUNT" and ws["N8"].value == "=Calc!$V$5"
+    # uniform card grid: 13-wide card columns, 3-wide spacers, 2-wide margins
+    dims = ws.column_dimensions
+    assert all(dims[c].width == 13.0 for c in "BCEFHIKLNO")
+    assert all(dims[c].width == 3.0 for c in "DGJM")
+    assert dims["A"].width == 2.0 and dims["P"].width == 2.0
+    assert {"B2:O2", "B3:O3"} <= {str(r) for r in ws.merged_cells.ranges}
     calc = wb["Calc"]
     assert calc["N1"].value.startswith('=IF(Interactive!$C$5="All"')
     assert "COUNTIFS" in calc["V1"].value
@@ -232,9 +240,19 @@ def test_mini_self_consistency(mini):
     ov = wb["Overview (static)"]
     fe = make_dashboard.FORMULA_ROW_END
     assert ov["B6"].value == f"=COUNTA(Data!$B$2:$B${fe})"
-    assert ov["D6"].value == f'=COUNTIF(Data!$J$2:$J${fe},"In Progress")'
-    assert ov["F6"].value == f'=COUNTIF(Data!$J$2:$J${fe},"Reopened")'
-    assert ov["I6"].value == f'=COUNTIF(Data!$J$2:$J${fe},"On Hold")'
+    assert ov["E6"].value == f'=COUNTIF(Data!$J$2:$J${fe},"In Progress")'
+    assert ov["H6"].value == f'=COUNTIF(Data!$J$2:$J${fe},"Reopened")'
+    assert ov["K6"].value == f'=COUNTIF(Data!$J$2:$J${fe},"On Hold")'
+    assert ov["B5"].value == "TOTAL COMPLAINTS"
+    assert ov["E5"].value == "OPEN / IN PROGRESS"
+    assert ov["H5"].value == "REOPENED"
+    assert ov["K5"].value == "ON HOLD"
+    # uniform card grid: 16-wide card columns, 3-wide spacers, 2-wide margins
+    dims = ov.column_dimensions
+    assert all(dims[c].width == 16.0 for c in "BCEFHIKL")
+    assert all(dims[c].width == 3.0 for c in "DGJ")
+    assert dims["A"].width == 2.0 and dims["M"].width == 2.0
+    assert {"B2:L2", "B3:L3"} <= {str(r) for r in ov.merged_cells.ranges}
     # The literals inside the card formulas must be exactly the status values
     # the Data sheet holds — otherwise a COUNTIF card would silently read 0.
     assert set(counts) <= {"In Progress", "Reopened", "On Hold", "New"}
@@ -247,6 +265,51 @@ def test_mini_self_consistency(mini):
     )
     assert result.returncode == 0, result.stderr
     assert (tmp / "cli.xlsx").exists()
+
+
+def test_analysis_band_grid(mini):
+    """Design invariants for the Analysis sheet: every section shares one
+    identical column treatment (tinted label column, centred counts, thin grey
+    boxes, uniform widths), and the Phase/Monthly band starts below the top
+    band with its titles intact — the old fixed rows 12-14 let band-1 rows
+    overwrite them whenever the sub-category list filled up."""
+    wb, _ = mini
+    ar = wb["Analysis"]
+    # band 1: three tables, headers on row 2
+    assert ar["A2"].value == "Category" and ar["B2"].value == "Count"
+    assert ar["D2"].value == "Sub-Category" and ar["E2"].value == "Count"
+    assert ar["G2"].value == "Status" and ar["H2"].value == "Count"
+    # band 2 starts below the longest band-1 body, one empty row between
+    t2 = next(r for r in range(3, 40)
+              if ar.cell(r, 1).value == "Complaints by Phase / Block")
+    assert ar.cell(t2, 4).value == "Monthly Complaint Trend"
+    assert ar.cell(t2 + 1, 1).value == "Phase" and ar.cell(t2 + 1, 2).value == "Count"
+    assert ar.cell(t2 + 1, 4).value == "Month" and ar.cell(t2 + 1, 5).value == "Count"
+    gap_rows = [r for r in range(3, t2)
+                if all(ar.cell(r, c).value is None for c in (1, 2, 4, 5, 7, 8))]
+    assert gap_rows == [t2 - 1]
+    # DLP section: restored as a manual-entry block — the dump carries no
+    # purchase dates, so counts stay deliberate dashes (never dead formulas)
+    assert ar["J1"].value == "Defect Liability Period (DLP) Status"
+    assert ar["J2"].value == "DLP Status" and ar["K2"].value == "Count"
+    assert [ar[f"J{i}"].value for i in (3, 4, 5)] == \
+        ["Out Of DLP", "Under DLP", "Not Specified"]
+    assert [ar[f"K{i}"].value for i in (3, 4, 5)] == ["—", "—", "—"]
+    assert all(ar[f"K{i}"].border.top.style == "thin" for i in (3, 4, 5))
+    # uniform column rhythm across the three table slots
+    dims = ar.column_dimensions
+    assert all(dims[c].width == 26.0 for c in "ADG")
+    assert all(dims[c].width == 10.0 for c in "BEH")
+    assert all(dims[c].width == 3.0 for c in "CFI")
+    # same cell treatment in every section: tinted label, boxed count,
+    # labels left with an indent, counts centred
+    for row, cols in ((3, (1, 4, 7)), (t2 + 2, (1, 4))):
+        for col in cols:
+            lc, cc = ar.cell(row, col), ar.cell(row, col + 1)
+            assert lc.fill.fgColor.rgb == "FFF2F6FC"
+            assert lc.alignment.horizontal == "left"
+            assert lc.border.left.style == "thin" and cc.border.top.style == "thin"
+            assert cc.alignment.horizontal == "center"
 
 
 def test_fullcalc_on_load(mini):
@@ -281,7 +344,8 @@ def _normalize_formula(text, ref_sheet):
 def test_golden_nikhil_data_roundtrip(tmp_path):
     """Feed the tool THE SAME DATA which Nikhil's file has: his dashboard Data
     sheet rows are converted back into a dump-shaped input file, the tool runs
-    on it, and the generated dashboard must match his workbook 1:1."""
+    on it, and the generated dashboard must match his workbook 1:1 on the
+    data layer (the card/chart layout is our own design now)."""
     from openpyxl import load_workbook
 
     # data_only=True replaces '=Calc!$V$1' with its cached '852', so formulas
@@ -333,19 +397,23 @@ def test_golden_nikhil_data_roundtrip(tmp_path):
     assert ref_ws["B1"].value == gen_ws["B1"].value == "ID"
     assert ref_ws["J1"].value == gen_ws["J1"].value == "Status"
 
-    # --- 3) Interactive KPI formulas identical -------------------------------
+    # --- 3) Interactive KPI cards on OUR card grid ----------------------------
+    # The dashboard layout is deliberately our own now (uniform grid), so the
+    # expected labels/engine formulas are checked at the new cells instead of
+    # being compared against his geometry.
     gi = gen["Interactive"]
-    ri = ref_f["Interactive"]
-    for ref_cell in ["B2", "B7", "D7", "F7", "H7", "K7",
-                     "B8", "D8", "F8", "H8", "K8", "D9", "K9"]:
-        a = ri[ref_cell].value
-        b = gi[ref_cell].value
-        if ref_cell in ("B2", "B7", "D7", "F7", "H7", "K7"):  # static text
-            assert a == b, (ref_cell, a, b)
-        else:  # formulas
-            assert _normalize_formula(str(a), "Calc") == _normalize_formula(
-                str(b), "Calc"
-            ), (ref_cell, a, b)
+    assert gi["B7"].value == "FILTERED TOTAL"
+    assert gi["E7"].value == "% OF ALL"
+    assert gi["H7"].value == "IN PROGRESS"
+    assert gi["K7"].value == "REOPENED"
+    assert gi["N7"].value == "TOP ISSUE COUNT"
+    assert gi["B8"].value == "=Calc!$V$1"
+    assert gi["E8"].value == "=Calc!$V$1/Calc!$V$7"
+    assert gi["H8"].value == "=Calc!$V$2"
+    assert gi["K8"].value == "=Calc!$V$3"
+    assert gi["N8"].value == "=Calc!$V$5"
+    assert gi["N9"].value == ("=INDEX(Calc!$D$2:$D$13,"
+                              "MATCH(Calc!$V$5,Calc!$E$2:$E$13,0))")
 
     # --- 4) Calc criteria cells identical ------------------------------------
     gc, rcf = gen["Calc"], ref_f["Calc"]
@@ -399,25 +467,24 @@ def test_golden_nikhil_data_roundtrip(tmp_path):
     assert len(gen["Interactive"].data_validations.dataValidation) == 4
     assert gen["Calc"].sheet_state == "hidden"
 
-    # --- 7) Overview KPI cards identical -------------------------------------
-    go, ro = gen["Overview (static)"], ref_v["Overview (static)"]
-    rof = ref_f["Overview (static)"]
-    for ref_cell in ["B2", "B3", "B5", "D5", "F5", "I5", "B7", "D7", "F7", "I7"]:
-        assert go[ref_cell].value == ro[ref_cell].value, ref_cell
-    # Card values are live COUNTA/COUNTIF formulas over the Data sheet, same as
-    # the hand-made file. (His status literal "HOLD" -> our "On Hold"; range
-    # ends normalized to $10000. The actual counts match his snapshot because
-    # the Data sheets are row-identical — asserted above.)
+    # --- 7) Overview KPI cards on OUR card grid -------------------------------
+    go = gen["Overview (static)"]
+    assert go["B5"].value == "TOTAL COMPLAINTS"
+    assert go["E5"].value == "OPEN / IN PROGRESS"
+    assert go["H5"].value == "REOPENED"
+    assert go["K5"].value == "ON HOLD"
+    # Card values are live COUNTA/COUNTIF formulas over the Data sheet (range
+    # ends normalized to $10000). The counts match his snapshot because the
+    # Data sheets are row-identical — asserted above.
     expected_cards = {
         "B6": f"=COUNTA(Data!$B$2:$B${make_dashboard.FORMULA_ROW_END})",
-        "D6": f'=COUNTIF(Data!$J$2:$J${make_dashboard.FORMULA_ROW_END},"In Progress")',
-        "F6": f'=COUNTIF(Data!$J$2:$J${make_dashboard.FORMULA_ROW_END},"Reopened")',
-        "I6": f'=COUNTIF(Data!$J$2:$J${make_dashboard.FORMULA_ROW_END},"On Hold")',
+        "E6": f'=COUNTIF(Data!$J$2:$J${make_dashboard.FORMULA_ROW_END},"In Progress")',
+        "H6": f'=COUNTIF(Data!$J$2:$J${make_dashboard.FORMULA_ROW_END},"Reopened")',
+        "K6": f'=COUNTIF(Data!$J$2:$J${make_dashboard.FORMULA_ROW_END},"On Hold")',
     }
     for cell, our_formula in expected_cards.items():
         assert (
             _normalize_formula(str(go[cell].value), "Data")
-            == _normalize_formula(str(rof[cell].value), "Data")
             == _normalize_formula(our_formula, "Data")
         ), cell
 
@@ -503,7 +570,7 @@ def test_golden_real_dump_integration(tmp_path):
     ov = gen["Overview (static)"]
     fe = make_dashboard.FORMULA_ROW_END
     assert ov["B6"].value == f"=COUNTA(Data!$B$2:$B${fe})"
-    assert ov["D6"].value == f'=COUNTIF(Data!$J$2:$J${fe},"In Progress")'
-    assert ov["F6"].value == f'=COUNTIF(Data!$J$2:$J${fe},"Reopened")'
-    assert ov["I6"].value == f'=COUNTIF(Data!$J$2:$J${fe},"On Hold")'
+    assert ov["E6"].value == f'=COUNTIF(Data!$J$2:$J${fe},"In Progress")'
+    assert ov["H6"].value == f'=COUNTIF(Data!$J$2:$J${fe},"Reopened")'
+    assert ov["K6"].value == f'=COUNTIF(Data!$J$2:$J${fe},"On Hold")'
     assert set(counts) <= {"In Progress", "Reopened", "On Hold", "New"}
