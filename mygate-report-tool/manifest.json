@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MyGate Report Tool",
-  "version": "2.2.0",
+  "version": "1.0.0",
   "description": "Generate pending MyGate tickets report directly from MyGate Dashboard GraphQL API.",
   "permissions": [
     "downloads",

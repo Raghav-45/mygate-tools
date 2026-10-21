@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MyGate Analysis Tool",
-  "version": "1.1.0",
+  "version": "1.0.0",
   "description": "Converts a MyGate Master Helpdesk Dump (.xlsx) into the standardized Complaints Analysis workbook — Interactive & Overview KPI sheets, Data, Analysis and Calc sheets with 10 live charts. Byte-for-byte identical to the frozen reference build.",
   "permissions": [
     "storage",
