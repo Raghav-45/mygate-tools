@@ -5,6 +5,67 @@
     <meta name="viewport" content="width=440, initial-scale=1.0" />
     <title>MyGate Analysis Tool</title>
     <link rel="stylesheet" href="popup.css" />
+    <style>
+      /* Analysis Tool: dump picker that mirrors .notched-input exactly
+         (donor popup.css kept untouched) */
+      .file-drop {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        height: 46px;
+        border: 1.5px solid #cbd5e1;
+        border-radius: var(--radius-sm);
+        padding: 0 12px;
+        background: var(--bg-card);
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+      .file-drop:hover {
+        border-color: #94a3b8;
+      }
+      .file-drop:focus-within,
+      .file-drop.dragover {
+        border-color: var(--color-teal);
+        box-shadow: 0 0 0 3px var(--color-teal-glow);
+      }
+      .file-drop.dragover {
+        background: #f4fafb;
+      }
+      .file-drop.has-file {
+        border-color: #10b981;
+        background: #f0fdf4;
+      }
+      .file-drop .hidden-file-input {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+        cursor: pointer;
+      }
+      .file-drop-icon {
+        flex: 0 0 auto;
+        color: var(--color-teal);
+      }
+      .file-drop.has-file .file-drop-icon {
+        color: #047857;
+      }
+      .file-drop-text {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-dim);
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .file-drop.has-file .file-drop-text {
+        color: #065f46;
+        font-weight: 600;
+      }
+    </style>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -88,32 +149,38 @@
 
       <!-- Main Form Configuration Card -->
       <section class="card main-form-card">
-        <!-- Dump File Picker -->
+        <!-- Dump File Picker (styled drop-zone; native input kept hidden) -->
         <div class="notched-input-group">
           <label class="notched-label" for="dumpFile"
             >Select Master Helpdesk Dump (xlsx) *</label
           >
-          <input
-            type="file"
-            id="dumpFile"
-            class="notched-input"
-            accept=".xlsx"
-          />
+          <div class="file-drop" id="dropZone">
+            <input
+              type="file"
+              id="dumpFile"
+              class="hidden-file-input"
+              accept=".xlsx"
+            />
+            <svg
+              class="file-drop-icon"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="17 8 12 3 7 8"></polyline>
+              <line x1="12" y1="3" x2="12" y2="15"></line>
+            </svg>
+            <span class="file-drop-text" id="dropZoneText"
+              >Choose dump (.xlsx) &mdash; or drop it here</span
+            >
+          </div>
         </div>
-        <div
-          class="file-name-box hidden"
-          id="fileNameBox"
-          style="
-            margin-top: -6px;
-            font-size: 12px;
-            font-weight: 600;
-            color: var(--text-muted);
-            background: #f8fafc;
-            border: 1px dashed var(--border-subtle);
-            border-radius: var(--radius-sm, 8px);
-            padding: 8px 12px;
-          "
-        ></div>
 
         <!-- Optional as-on override -->
         <div class="notched-input-group">

@@ -8,7 +8,8 @@
 
 const buildBtn = document.getElementById('buildBtn')
 const dumpFileInput = document.getElementById('dumpFile')
-const fileNameBox = document.getElementById('fileNameBox')
+const dropZone = document.getElementById('dropZone')
+const dropZoneText = document.getElementById('dropZoneText')
 const asOnDateInput = document.getElementById('asOnDate')
 const alertBanner = document.getElementById('alertBanner')
 const progressContainer = document.getElementById('progressContainer')
@@ -33,18 +34,45 @@ aboutModal.addEventListener('click', (e) => {
   if (e.target === aboutModal) aboutModal.classList.add('hidden')
 })
 
-// ---- File selection -------------------------------------------------------
-dumpFileInput.addEventListener('change', () => {
-  const f = dumpFileInput.files && dumpFileInput.files[0]
-  if (f) {
-    fileNameBox.textContent = f.name
-    fileNameBox.classList.remove('hidden')
+// ---- File selection (click / keyboard / drag & drop) ----------------------
+const DEFAULT_ZONE_TEXT = 'Choose dump (.xlsx) \u2014 or drop it here'
+
+function setChosenFile(files) {
+  const f = files && files[0]
+  if (f && f.name.toLowerCase().endsWith('.xlsx')) {
+    dropZoneText.textContent = f.name + ' (click to change)'
+    dropZone.classList.add('has-file')
     buildBtn.disabled = false
   } else {
-    fileNameBox.classList.add('hidden')
-    fileNameBox.textContent = ''
+    if (f) {
+      // wrong extension chosen via the OS dialog or a stray drop
+      alertBanner.textContent = '⚠️ Please choose a .xlsx dump file'
+      alertBanner.classList.remove('hidden')
+    }
+    dropZoneText.textContent = DEFAULT_ZONE_TEXT
+    dropZone.classList.remove('has-file')
     buildBtn.disabled = true
   }
+}
+
+dumpFileInput.addEventListener('change', () => {
+  setChosenFile(dumpFileInput.files)
+})
+
+dropZone.addEventListener('dragover', (e) => {
+  e.preventDefault()
+  dropZone.classList.add('dragover')
+})
+
+dropZone.addEventListener('dragleave', () => {
+  dropZone.classList.remove('dragover')
+})
+
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault()
+  dropZone.classList.remove('dragover')
+  dumpFileInput.files = e.dataTransfer.files
+  setChosenFile(e.dataTransfer.files)
 })
 
 // ---- Build flow -----------------------------------------------------------
