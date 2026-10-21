@@ -9,7 +9,7 @@ TOOLS=(
   "mygate-dump-tool"
   "mygate-report-tool"
   "mygate-summary-tool"
-  "mygate-dashboard-tool-extension"
+  "mygate-analysis-tool"
 )
 
 rm -rf dist

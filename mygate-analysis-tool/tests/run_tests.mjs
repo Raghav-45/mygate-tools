@@ -1,18 +1,21 @@
 /**
- * Mirror of mygate-dashboard-tool/tests/test_dashboard_tool.py for the
- * standalone JS engine. Run from anywhere:
+ * Regression suite for the standalone JS engine. Transformation rules and
+ * workbook invariants mirror the reference generator's behavior (the
+ * original python suite was retired when this became a JS-only tool).
+ * Run from anywhere:
  *
  *     node tests/run_tests.mjs
  *
- * Layers mirror the Python suite's first two sections:
+ * Layers:
  *   1. transformation-rule unit tests (collapse/phase/date parsing/ordinal/
  *      month-span/filename conventions/as-on derivation)
  *   2. mini end-to-end: a mini dump is built in JS the same way the suite's
  *      write_mini_dump lays it out (title / report line / headers / rows),
  *      then readDumpRows + generate assert the same invariants.
  *
- * Workbook byte-parity against make_dashboard.py is exercised by
- * mygate-dashboard-tool/tests/test_extension_parity.py on top of these.
+ * Byte-identity with the frozen reference build was verified on a mini and
+ * the full 813-row master dump during development; these structural checks
+ * keep guarding it.
  */
 import { createRequire } from "node:module";
 import path from "node:path";

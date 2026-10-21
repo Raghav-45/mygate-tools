@@ -2,8 +2,8 @@
  * Node CLI harness for the workbook engine:
  *   node tests/generate.mjs <dump.xlsx> <out.xlsx> [--as-on DD.MM.YY]
  *
- * Mirrors the Python tool's CLI (`make_dashboard.py dump.xlsx out.xlsx
- * [--as-on ...]`) so parity runs can drive both identically.
+ * Arg scheme mirrors the reference generator CLI
+ * (`<generator> dump.xlsx out.xlsx [--as-on DD.MM.YY]`).
  */
 import { createRequire } from "node:module";
 import { readFileSync, writeFileSync } from "node:fs";

@@ -1,9 +1,9 @@
 /**
- * MyGate Dashboard Tool — workbook generation engine.
+ * MyGate Analysis Tool — workbook generation engine.
  *
- * A faithful JavaScript port of mygate-dashboard-tool/make_dashboard.py
- * (the frozen openpyxl 3.1.5 reference). Produces a workbook that is
- * part-for-part byte-identical to the Python tool's output (except
+ * A faithful JavaScript port of the frozen reference generator (openpyxl
+ * 3.1.5 semantics). Produces a workbook that is part-for-part byte-identical
+ * to that reference build (except
  * docProps/core.xml build timestamps and the zip container timestamps,
  * which reflect each build's wall-clock time — the Python tool does the
  * same, so behavior matches too).
@@ -827,7 +827,7 @@ function SstStore() {
 }
 
 /** Serialize one worksheet — byte-faithful to openpyxl 3.1.5's incremental
- *  writer for exactly the feature subset the dashboard sheets use. */
+ *  writer for exactly the feature subset the analysis sheets use. */
 function renderSheet(mod, sstParam) {
   const sst = sstParam || new SstStore();
   const out = [];
@@ -1480,11 +1480,11 @@ async function generate(dumpBytes, options) {
     ' xmlns:dc="http://purl.org/dc/elements/1.1/"' +
     ' xmlns:dcterms="http://purl.org/dc/terms/"' +
     ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">' +
-    "<dc:creator>MyGate Dashboard Tool</dc:creator>" +
+    "<dc:creator>MyGate Analysis Tool</dc:creator>" +
     "<dc:title>Mygate Complaints Dashboard as on " + asOnLabel(asOn) + "</dc:title>" +
     '<dcterms:created xsi:type="dcterms:W3CDTF">' + coreNow + "</dcterms:created>" +
     '<dcterms:modified xsi:type="dcterms:W3CDTF">' + coreNow + "</dcterms:modified>" +
-    "<cp:lastModifiedBy>MyGate Dashboard Tool</cp:lastModifiedBy>" +
+    "<cp:lastModifiedBy>MyGate Analysis Tool</cp:lastModifiedBy>" +
     "</cp:coreProperties>";
 
   let contentTypes = utf8Read(b64Decode(STATIC_B64["[Content_Types].xml"]));
@@ -1571,11 +1571,11 @@ const api = {
 };
 
 if (typeof self !== "undefined" && typeof importScripts === "function") {
-  self.DashboardEngine = api;
+  self.AnalysisEngine = api;
 }
 if (typeof module !== "undefined" && module.exports) {
   module.exports = api;
 }
-root.DashboardEngine = api;
+root.AnalysisEngine = api;
 
 })(typeof globalThis !== "undefined" ? globalThis : this);

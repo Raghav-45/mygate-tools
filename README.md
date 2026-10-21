@@ -1,15 +1,13 @@
 # mygate-tools
 
-Five tools for the MyGate admin dashboard — four Chrome (Manifest V3)
-extensions and one Python CLI:
+Four tools for the MyGate admin dashboard — all Chrome (Manifest V3) extensions:
 
 | Tool | Purpose | Folder |
 |------|---------|--------|
 | **MyGate Dump Tool** | Autonomous multi-year ticket dump exporter (bypasses MyGate's 1-year export restriction) | `mygate-dump-tool` |
 | **MyGate Report Tool** | Generate pending tickets report from MyGate Dashboard GraphQL API | `mygate-report-tool` |
 | **MyGate Summary Tool** | Complaint summary sheet automation | `mygate-summary-tool` |
-| **MyGate Dashboard Tool** | Python CLI: builds the "Mygate Complaints Dashboard as on DD.MM.YY" workbook (interactive COUNTIFS dashboard + charts) from a Dump-Tool master dump; verified 1:1 against the hand-made dashboards | `mygate-dashboard-tool` |
-| **MyGate Dashboard Tool** | Chrome extension: builds the exact same dashboard workbook from a master dump — byte-for-byte identical to the Python CLI's output (frozen parity reference). Turn any dump into the standardized dashboard with one click; no CLI needed | `mygate-dashboard-tool-extension` |
+| **MyGate Analysis Tool** | One-click converter: turns a master helpdesk dump into the standardized "Mygate Complaints Dashboard as on DD.MM.YY" workbook — Interactive & Overview KPI sheets, 10 live charts, Data / Analysis sheets and a hidden Calc engine; byte-identical to the manual dashboard it replaces | `mygate-analysis-tool` |
 
 ## Trigger a release (GitHub)
 
@@ -26,7 +24,7 @@ and attaches them to a GitHub Release. To trigger it:
 
 Once it finishes, open the generated Release (tagged `v<version>`) and download the `.zip` assets:
 `mygate-dump-tool.zip`, `mygate-report-tool.zip`, `mygate-summary-tool.zip`,
-`mygate-dashboard-tool-extension.zip`.
+`mygate-analysis-tool.zip`.
 
 ## Build locally (preview before releasing)
 
@@ -47,3 +45,18 @@ The `.zip` files are unpacked extensions, installed via **Load unpacked**:
 5. Pin the extension to the toolbar and sign in to MyGate before using it.
 
 Repeat for each tool you want installed.
+
+## Run the Analysis Tool engine tests
+
+The workbook engine ships with a self-contained Node regression suite (63 checks —
+transformation rules plus a full mini end-to-end build):
+
+```sh
+node mygate-analysis-tool/tests/run_tests.mjs
+```
+
+You can also generate a workbook from any dump straight from the CLI:
+
+```sh
+node mygate-analysis-tool/tests/generate.mjs dump.xlsx out.xlsx --as-on 22.09.26
+```

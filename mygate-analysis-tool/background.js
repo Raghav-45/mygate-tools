@@ -1,12 +1,13 @@
 /**
- * MyGate Dashboard Tool — Background Service Worker
+ * MyGate Analysis Tool — Background Service Worker
  *
  * Converts a MyGate Master Helpdesk Dump (.xlsx) into the standardized
- * "Mygate Complaints Dashboard" workbook and auto-downloads it.
+ * "Mygate Complaints Dashboard as on <DD.MM.YY>.xlsx" workbook and
+ * auto-downloads it.
  *
  * The conversion engine (engine.js + constants.js + chart_templates/) is a
- * faithful port of the reference make_dashboard.py: the produced workbook is
- * part-for-part byte-identical to the Python tool's output (both stamp their
+ * faithful port of the frozen reference generator: the produced workbook is
+ * part-for-part byte-identical to that reference build (both stamp their
  * own build time into docProps/core.xml and the zip container).
  */
 
@@ -32,14 +33,14 @@ function arrayBufferToBase64(buffer) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'BUILD_DASHBOARD') {
-    runDashboardBuild(message.params)
+    runAnalysisBuild(message.params)
   }
   return true
 })
 
 // Fast single-pass build (seconds). Progress messages are kept so the popup
 // can show the same live UX as the other MyGate tools.
-async function runDashboardBuild(params) {
+async function runAnalysisBuild(params) {
   const { dumpBase64, asOn, dumpFileName } = params
 
   await updateState({
@@ -59,7 +60,7 @@ async function runDashboardBuild(params) {
       isDone: false,
     })
 
-    const result = await self.DashboardEngine.generate(dumpBytes, {
+    const result = await self.AnalysisEngine.generate(dumpBytes, {
       dumpFileName,
       asOn: asOn || null,
     })
@@ -67,7 +68,7 @@ async function runDashboardBuild(params) {
     await updateState({
       isBuilding: true,
       pct: 85,
-      statusText: 'Packing the dashboard workbook...',
+      statusText: 'Packing the analysis workbook...',
       isDone: false,
     })
 
@@ -102,7 +103,7 @@ async function runDashboardBuild(params) {
       dashboardScanState: {
         isBuilding: false,
         pct: 100,
-        statusText: 'Dashboard Downloaded!',
+        statusText: 'Analysis Downloaded!',
         info: result.info,
         isDone: true,
       },
@@ -111,7 +112,7 @@ async function runDashboardBuild(params) {
       .sendMessage({ type: 'DASHBOARD_DONE', info: result.info })
       .catch(() => {})
   } catch (err) {
-    console.error('Dashboard build failed:', err)
+    console.error('Analysis build failed:', err)
     await chrome.storage.local.set({
       dashboardScanState: {
         isBuilding: false,

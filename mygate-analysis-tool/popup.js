@@ -1,8 +1,8 @@
 /**
- * MyGate Dashboard Tool — Popup logic
+ * MyGate Analysis Tool — Popup logic
  *
  * User picks a Master Helpdesk Dump (.xlsx); the file's bytes go to the
- * background service worker, which builds the standardized dashboard workbook
+ * background service worker, which builds the standardized analysis workbook
  * (byte-identical to the reference Python tool) and auto-downloads it.
  */
 
@@ -136,7 +136,7 @@ function complete(info) {
   progressContainer.classList.remove('hidden')
   progressFill.style.width = '100%'
   progressPctText.textContent = '100%'
-  progressStepText.textContent = 'Dashboard Downloaded!'
+  progressStepText.textContent = 'Analysis Downloaded!'
   resultsSection.classList.remove('hidden')
   autoDlBanner.classList.remove('hidden')
   kpiTotal.textContent = Number(info.total || 0).toLocaleString()
