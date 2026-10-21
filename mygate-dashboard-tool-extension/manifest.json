@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "MyGate Dashboard Tool",
+  "version": "1.0.0",
+  "description": "Converts a MyGate Master Helpdesk Dump (.xlsx) into the standardized 'Mygate Complaints Dashboard' workbook — Interactive/Overview dashboards, Data, Analysis and Calc sheets with 10 live charts. Byte-for-byte identical to the reference Python tool.",
+  "permissions": [
+    "storage",
+    "downloads"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

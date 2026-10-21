@@ -1,6 +1,6 @@
 # mygate-tools
 
-Four tools for the MyGate admin dashboard — three Chrome (Manifest V3)
+Five tools for the MyGate admin dashboard — four Chrome (Manifest V3)
 extensions and one Python CLI:
 
 | Tool | Purpose | Folder |
@@ -9,10 +9,11 @@ extensions and one Python CLI:
 | **MyGate Report Tool** | Generate pending tickets report from MyGate Dashboard GraphQL API | `mygate-report-tool` |
 | **MyGate Summary Tool** | Complaint summary sheet automation | `mygate-summary-tool` |
 | **MyGate Dashboard Tool** | Python CLI: builds the "Mygate Complaints Dashboard as on DD.MM.YY" workbook (interactive COUNTIFS dashboard + charts) from a Dump-Tool master dump; verified 1:1 against the hand-made dashboards | `mygate-dashboard-tool` |
+| **MyGate Dashboard Tool** | Chrome extension: builds the exact same dashboard workbook from a master dump — byte-for-byte identical to the Python CLI's output (frozen parity reference). Turn any dump into the standardized dashboard with one click; no CLI needed | `mygate-dashboard-tool-extension` |
 
 ## Trigger a release (GitHub)
 
-The GitHub Actions workflow `Manual Release` packages the 3 folders into `.zip` assets
+The GitHub Actions workflow `Manual Release` packages the 4 extension folders into `.zip` assets
 and attaches them to a GitHub Release. To trigger it:
 
 1. Go to the repo on GitHub → **Actions** tab.
@@ -24,7 +25,8 @@ and attaches them to a GitHub Release. To trigger it:
 4. Click **Run workflow**.
 
 Once it finishes, open the generated Release (tagged `v<version>`) and download the `.zip` assets:
-`mygate-dump-tool.zip`, `mygate-report-tool.zip`, `mygate-summary-tool.zip`.
+`mygate-dump-tool.zip`, `mygate-report-tool.zip`, `mygate-summary-tool.zip`,
+`mygate-dashboard-tool-extension.zip`.
 
 ## Build locally (preview before releasing)
 
@@ -32,7 +34,7 @@ Once it finishes, open the generated Release (tagged `v<version>`) and download 
 ./build_release.sh
 ```
 
-This creates the same three `.zip` files in `./dist` so you can verify them locally.
+This creates the same four `.zip` files in `./dist` so you can verify them locally.
 
 ## Install an extension in Chrome
 

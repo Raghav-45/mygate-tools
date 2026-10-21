@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the three extension zips locally into ./dist for manual release/testing.
+# Build the four extension zips locally into ./dist for manual release/testing.
 # The GitHub workflow does the same thing for an actual release.
 set -euo pipefail
 
@@ -9,6 +9,7 @@ TOOLS=(
   "mygate-dump-tool"
   "mygate-report-tool"
   "mygate-summary-tool"
+  "mygate-dashboard-tool-extension"
 )
 
 rm -rf dist
@@ -23,6 +24,7 @@ for tool in "${TOOLS[@]}"; do
   find "dist/$tool" -name '*.zip' -delete
   find "dist/$tool" -name '*.crx' -delete
   find "dist/$tool" -name '*.pem' -delete
+  find "dist/$tool" -type d -name 'tests' -prune -exec rm -rf {} +
 
   (cd "dist/$tool" && zip -r "../${tool}.zip" .)
 

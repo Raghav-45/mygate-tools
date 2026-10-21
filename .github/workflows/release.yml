@@ -43,6 +43,7 @@ jobs:
             "mygate-dump-tool"
             "mygate-report-tool"
             "mygate-summary-tool"
+            "mygate-dashboard-tool-extension"
           )
 
           for tool in "${TOOLS[@]}"; do
@@ -56,6 +57,7 @@ jobs:
             find "dist/$tool" -name '*.zip' -delete
             find "dist/$tool" -name '*.crx' -delete
             find "dist/$tool" -name '*.pem' -delete
+            find "dist/$tool" -type d -name 'tests' -prune -exec rm -rf {} +
 
             # Zip the folder contents so the extension root is the zip root
             (cd "dist/$tool" && zip -r "../${tool}.zip" .)
@@ -78,3 +80,4 @@ jobs:
             dist/mygate-dump-tool.zip
             dist/mygate-report-tool.zip
             dist/mygate-summary-tool.zip
+            dist/mygate-dashboard-tool-extension.zip
