@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
-# Build the four extension zips locally into ./dist for manual release/testing.
+# Build the extension zips locally into ./dist for manual release/testing.
 # The GitHub workflow does the same thing for an actual release.
 set -euo pipefail
 
 cd "$(dirname "$0")"
+
+node scripts/sync_handoff_sources.mjs
 
 TOOLS=(
   "mygate-dump-tool"
   "mygate-report-tool"
   "mygate-summary-tool"
   "mygate-analysis-tool"
+  "mygate-handoff-tool"
 )
 
 rm -rf dist

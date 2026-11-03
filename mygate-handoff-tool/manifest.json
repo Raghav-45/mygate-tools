@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "mygate-handoff-tool",
+  "version": "1.0.0",
+  "description": "Generate and download selected MyGate workbooks in order, then prepare the Outlook email independently. Summary is optional.",
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "downloads",
+    "tabs",
+    "scripting",
+    "cookies",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://*.mygate.com/*",
+    "https://*.cloudfront.net/*",
+    "https://outlook.office.com/*",
+    "https://outlook.office365.com/*",
+    "https://outlook.live.com/*",
+    "https://outlook.cloud.microsoft/*",
+    "https://outlook.m365.cloud.microsoft/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "mygate-handoff-tool",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

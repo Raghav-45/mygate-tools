@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version / tag (e.g. 1.0.0)'
+        description: 'Release version / tag (e.g. 0.0.3)'
         required: true
         type: string
-        default: '1.0.0'
+        default: '0.0.3'
       release_notes:
         description: 'Release notes'
         required: false
@@ -34,6 +34,17 @@ jobs:
         with:
           python-version: '3.x'
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Prepare and verify handoff extension
+        run: |
+          node scripts/sync_handoff_sources.mjs
+          node mygate-handoff-tool/tests/run_tests.mjs
+          node mygate-analysis-tool/tests/run_tests.mjs
+
       - name: Build extension zips
         run: |
           set -euo pipefail
@@ -44,6 +55,7 @@ jobs:
             "mygate-report-tool"
             "mygate-summary-tool"
             "mygate-analysis-tool"
+            "mygate-handoff-tool"
           )
 
           for tool in "${TOOLS[@]}"; do
@@ -81,3 +93,4 @@ jobs:
             dist/mygate-report-tool.zip
             dist/mygate-summary-tool.zip
             dist/mygate-analysis-tool.zip
+            dist/mygate-handoff-tool.zip
