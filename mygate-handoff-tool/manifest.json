@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "mygate-handoff-tool",
+  "name": "MyGate Handoff Tool",
   "version": "1.0.0",
   "description": "Generate and download selected MyGate workbooks in order, then prepare the Outlook email independently. Summary is optional.",
   "permissions": [
@@ -23,7 +23,7 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "mygate-handoff-tool",
+    "default_title": "MyGate Handoff Tool",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",

@@ -4,13 +4,13 @@ Five tools for the MyGate admin dashboard — all Chrome (Manifest V3) extension
 
 | Tool | Purpose | Folder |
 |------|---------|--------|
-| **mygate-handoff-tool** | Two independent steps: generate and download selected original workbooks, then prepare the Outlook draft. Summary is off by default. No saved-file or file-import mode. | `mygate-handoff-tool` |
+| **MyGate Handoff Tool** | Two independent steps: generate and download selected original workbooks, then prepare the Outlook draft. Summary is off by default. No saved-file or file-import mode. | `mygate-handoff-tool` |
 | **MyGate Dump Tool** | Autonomous multi-year ticket dump exporter (bypasses MyGate's 1-year export restriction) | `mygate-dump-tool` |
 | **MyGate Report Tool** | Generate pending tickets report from MyGate Dashboard GraphQL API | `mygate-report-tool` |
 | **MyGate Summary Tool** | Complaint summary sheet automation | `mygate-summary-tool` |
 | **MyGate Analysis Tool** | One-click converter: turns a master helpdesk dump into the standardized "Mygate Complaints Dashboard as on DD.MM.YY" workbook — Interactive & Overview KPI sheets, 10 live charts, Data / Analysis sheets and a hidden Calc engine; byte-identical to the manual dashboard it replaces | `mygate-analysis-tool` |
 
-## mygate-handoff-tool (recommended)
+## MyGate Handoff Tool (recommended)
 
 1. Sign in to MyGate, choose **Report From** and **Report Till**, then click
    **Generate & Download**. Reports run in this order: **Pending Tickets Report →
@@ -54,10 +54,23 @@ For personal distribution without Chrome Web Store registration, use the existin
 GitHub **Manual Release** workflow to publish the extension ZIP. Users replace the
 contents of the same unpacked extension folder and click **Reload** at
 `chrome://extensions`. Pushing code or publishing a GitHub release alone does not
-update their installed extension. A local updater script could automate replacing
-the files, with Chrome still needing to reload the extension. Self-hosted CRX
-automatic updates on Windows/macOS require managed enterprise policies; Linux
-also supports self-hosted extension updates.
+update their installed extension. The [Windows updater script](scripts/Update-MyGateExtensions.ps1)
+replaces files for extension folders already installed from `Downloads`; Chrome
+still needs to reload each extension. Self-hosted CRX automatic updates on
+Windows/macOS require managed enterprise policies; Linux also supports self-hosted
+extension updates.
+
+To run the updater from an elevated Command Prompt after the script is available
+in the public repository:
+
+```cmd
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$p=Join-Path $env:TEMP 'Update-MyGateExtensions.ps1'; Invoke-WebRequest 'https://raw.githubusercontent.com/Raghav-45/mygate-tools/main/scripts/Update-MyGateExtensions.ps1' -OutFile $p; & $p"
+```
+
+It updates only matching MyGate extension folders already present directly in the
+current user's `Downloads` folder. It does not install extensions into Chrome;
+after it finishes, open `chrome://extensions` and click **Reload** for each updated
+extension. Close Chrome before running if extension files are in use.
 
 ## Trigger a release (GitHub)
 
