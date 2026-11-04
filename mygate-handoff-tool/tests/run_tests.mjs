@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url)
 const dir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const root = path.dirname(dir)
 const ExcelJS = require(path.join(dir, 'exceljs.min.js'))
-const params = { fromDate: '2024-01-01', toDate: '2024-01-02', requestDelayMs: 1000,
+const params = { fromDate: '2024-01-01', toDate: '2024-01-02',
   slots: ['report', 'dump', 'analysis', 'summary'],
   to: ['test@example.invalid'], cc: [], subject: 'Test', includeTable: true }
 const cloud = new ExcelJS.Workbook()
@@ -25,10 +25,11 @@ const cloudBytes = await cloud.xlsx.writeBuffer()
 const clone = value => structuredClone(value)
 const delay = () => new Promise(resolve => setTimeout(resolve, 1))
 
-function harness({ enableEmail = false } = {}) {
+function harness({ enableEmail } = {}) {
   const store = {}
   const downloads = []
   const network = []
+  const requestedDelays = []
   const outlook = []
   let router
   let startup
@@ -52,7 +53,9 @@ function harness({ enableEmail = false } = {}) {
   }
   const context = vm.createContext({ chrome, location: { href: 'extension:///background.js' }, console: { log() {}, warn() {}, error() {} }, ExcelJS,
     Uint8Array, ArrayBuffer, TextEncoder, TextDecoder, Blob, Response, DecompressionStream, CompressionStream,
-    Buffer, atob, btoa, structuredClone, setTimeout: fn => setTimeout(fn, 0), clearTimeout, setInterval, clearInterval,
+    Buffer, atob, btoa, structuredClone,
+    // Ignore zero-delay yields used by the local workbook engine.
+    setTimeout: (fn, ms) => { if (ms > 0) requestedDelays.push(ms); return setTimeout(fn, 0) }, clearTimeout, setInterval, clearInterval,
     fetch: async (url, options) => {
       if (url.startsWith('extension:///')) return { text: async () => fs.readFileSync(path.join(dir, url.slice(13)), 'utf8') }
       if (url.startsWith('https://synthetic.invalid/')) return { arrayBuffer: async () => cloudBytes }
@@ -76,17 +79,17 @@ function harness({ enableEmail = false } = {}) {
   context.globalThis = context
   context.importScripts = (...files) => files.forEach(file => vm.runInContext(fs.readFileSync(path.join(dir, file), 'utf8'), context, { filename: file }))
   context.importScripts('background.js')
-  // Exercise the preserved email implementation separately from the shipped,
-  // disabled release. Production behavior is tested below without this override.
-  if (enableEmail) context.HandoffRelease = Object.freeze({ emailEnabled: true })
-  vm.runInContext(`ensureOutlookTab = async () => 1; openCompose = async () => ({ok: true});`, context)
+  // Most checks exercise the shipped flag; the kill-switch check overrides it.
+  if (typeof enableEmail === 'boolean') context.HandoffRelease = Object.freeze({ emailEnabled: enableEmail })
+  vm.runInContext(`ensureOutlookTab = async () => 1;`, context)
+  context.openReply = async (_tab, payload) => { outlook.push({ op: 'replyAll', payload }); return { ok: true, sourceUrl: 'https://outlook.cloud.microsoft/mail/sentitems/id/previous-report' } }
   context.ocCmd = async (_tab, op, payload) => {
     outlook.push({ op, payload })
     if (control.failEmail) throw new Error('Synthetic Outlook UI change')
     if (op === 'attach') return { ok: true, results: payload.files.map((f, i) => ({ name: f.name, ok: !control.partialAttach || i === 0 })) }
     return { ok: true }
   }
-  return { store, downloads, network, outlook, control, context, startup: () => startup(),
+  return { store, downloads, network, requestedDelays, outlook, control, context, startup: () => startup(),
     request: message => new Promise(resolve => router(message, {}, resolve)),
     run: async (step, cfg = params) => {
       const response = await new Promise(resolve => router({ type: step === 1 ? 'HANDOFF_GENERATE' : 'HANDOFF_DRAFT', cfg }, {}, resolve))
@@ -107,21 +110,79 @@ for (const slot of ['dump', 'report', 'summary', 'analysis']) {
 for (const f of ['engine.js', 'constants.js', 'popup.css']) assert.deepEqual(fs.readFileSync(path.join(dir, f)), fs.readFileSync(path.join(root, 'mygate-analysis-tool', f)))
 console.log('PASS: original generator bodies, analysis assets, and shared design are unchanged')
 
-const defaults = harness({ enableEmail: true })
+// A reply must use the user's selected Outlook tab, never a newly opened email
+// or another Outlook window. Even a failed reply cannot navigate to compose.
+const replyBridgeCalls = []
+const replyBridgeControl = { tab: { id: 9 }, fail: false }
+const replyBridge = vm.createContext({
+  OUTLOOK_TAB_URLS: ['*://outlook.cloud.microsoft/*'],
+  chrome: {
+    tabs: {
+      query: async query => { replyBridgeCalls.push({ query }); return replyBridgeControl.tab ? [replyBridgeControl.tab] : [] },
+      sendMessage: async (tabId, message, target) => {
+        replyBridgeCalls.push({ tabId, message, target })
+        return replyBridgeControl.fail
+          ? { ok: false, error: 'No report is open', deeplinks: ['https://outlook.cloud.microsoft/mail/deeplink/compose'] }
+          : { ok: true, sourceUrl: 'https://outlook.cloud.microsoft/mail/sentitems/id/previous-report' }
+      },
+    },
+    scripting: { executeScript: async () => [] },
+  },
+  sleep: async () => {}, aioLog: async () => {}, setTimeout, clearTimeout,
+})
+vm.runInContext(fs.readFileSync(path.join(dir, 'outlook-bridge.js'), 'utf8'), replyBridge)
+assert.equal(await vm.runInContext('ensureOutlookTab()', replyBridge), 9)
+assert.equal(replyBridgeCalls[0].query.active, true)
+assert.equal(replyBridgeCalls[0].query.currentWindow, true)
+await vm.runInContext('openReply(9, {draftKey:"batch-1",subject:"Mygate Complaint Summary."})', replyBridge)
+assert.equal(replyBridgeCalls.at(-1).message.aio, 'replyAll')
+assert.equal(replyBridgeCalls.at(-1).target.frameId, 0)
+replyBridgeControl.tab = null
+await assert.rejects(vm.runInContext('ensureOutlookTab()', replyBridge), /previous report email/)
+replyBridgeControl.fail = true
+await assert.rejects(vm.runInContext('openReply(9, {draftKey:"batch-1"})', replyBridge), /No report is open/)
+assert.equal(replyBridgeCalls.filter(call => call.message).length, 2)
+console.log('PASS: replies use the active Outlook tab and main frame; failures never open or navigate to New mail')
+
+const defaults = harness()
+assert.equal(defaults.context.HandoffRelease.emailEnabled, true)
 const initial = await defaults.request({ type: 'HANDOFF_GET_STATE' })
 assert.deepEqual(Array.from(initial.cfg.slots), ['report', 'dump', 'analysis'])
-assert.equal(initial.cfg.requestDelayMs, 1000)
-defaults.store.handoffCfg = { requestDelayMs: 2000 }
-assert.equal((await defaults.request({ type: 'HANDOFF_GET_STATE' })).cfg.requestDelayMs, 1000)
+assert.equal(initial.cfg.requestDelayMs, undefined)
+assert.deepEqual(Array.from(initial.cfg.to), ['gulati-divya@dlf.in', 'pawar-pankaj@dlf.in', 'sooraj@dlf.in'])
+assert.deepEqual(Array.from(initial.cfg.cc), ['tech.if3@sgvgroup.in', 'estate.if3@sgvgroup.in', 'apm2.if3@sgvgroup.in',
+  'anurag.yadav@sgvgroup.in', 'anurag.sharma@sgvgroup.in'])
+defaults.store.handoffCfg = {
+  to: ['gulati-divya@dlf.in', 'pawar-pankat@dlf.in'],
+  cc: ['Ashok Kumar', 'Estate If3', 'Kirshan Chander', 'Anurag Yadav', 'Anurag Sharma'],
+}
+const upgradedRecipients = (await defaults.request({ type: 'HANDOFF_GET_STATE' })).cfg
+assert.deepEqual(Array.from(upgradedRecipients.to), Array.from(initial.cfg.to))
+assert.deepEqual(Array.from(upgradedRecipients.cc), Array.from(initial.cfg.cc))
+defaults.store.handoffCfg = { to: ['custom@example.invalid'], cc: ['Ashok Kumar', 'other@example.invalid'] }
+const customRecipients = (await defaults.request({ type: 'HANDOFF_GET_STATE' })).cfg
+assert.deepEqual(customRecipients.to, ['custom@example.invalid'])
+assert.deepEqual(customRecipients.cc, ['tech.if3@sgvgroup.in', 'other@example.invalid'])
+defaults.store.handoffCfg.cc = []
+assert.deepEqual((await defaults.request({ type: 'HANDOFF_GET_STATE' })).cfg.cc, [])
+console.log('PASS: email defaults use addresses; existing default names and typo migrate while custom recipients stay intact')
+defaults.store.handoffCfg = { requestDelayMs: 5000, settingsVersion: 2 }
+const migratedCfg = (await defaults.request({ type: 'HANDOFF_GET_STATE' })).cfg
+assert.equal(migratedCfg.requestDelayMs, undefined)
+assert.equal(migratedCfg.settingsVersion, undefined)
+await defaults.request({ type: 'HANDOFF_SAVE_CFG', cfg: { ...params, requestDelayMs: 5000, settingsVersion: 2 } })
+assert.equal(defaults.store.handoffCfg.requestDelayMs, undefined)
+assert.equal(defaults.store.handoffCfg.settingsVersion, undefined)
 let defaultState = await defaults.run(1, { ...params, slots: initial.cfg.slots, requestDelayMs: 1300 })
 assert.equal(defaultState.phase, 'ready', defaultState.error)
 assert.equal(defaults.downloads.length, 3)
-assert.equal(defaults.store.handoffCfg.requestDelayMs, 1300)
+assert.equal(defaults.store.handoffCfg.requestDelayMs, undefined)
+assert.deepEqual([...new Set(defaults.requestedDelays)].sort((a, b) => a - b), [1000, 2000])
 assert.equal(defaultState.files.find(f => f.slot === 'summary').status, 'off')
 assert.deepEqual(defaults.downloads.map(f => f.filename.split('_')[0]), ['Pending', 'MyGate', 'Mygate Complaints Dashboard as on 02.01.24.xlsx'])
-console.log('PASS: default selection downloads Pending Tickets, Dump, Analysis in order; Summary is off and 1s default migrates')
+console.log('PASS: default selection downloads Pending Tickets, Dump, Analysis in order; Summary is off and obsolete shared delays are ignored')
 
-const h = harness({ enableEmail: true })
+const h = harness()
 let state = await h.run(1)
 assert.equal(state.phase, 'ready', JSON.stringify(state))
 assert.equal(state.generationReady, true)
@@ -163,6 +224,11 @@ assert.equal(state.phase, 'done', state.error)
 assert.equal(h.network.length, networkCount)
 assert.equal(h.downloads.length, 4)
 assert.ok(h.outlook.find(c => c.op === 'body').payload.html.includes('Pending Mygate Tickets'))
+assert.equal(h.outlook.find(c => c.op === 'replyAll').payload.draftKey, JSON.stringify([batch.generatedAt, params.to, params.cc, params.subject]))
+assert.equal(h.outlook.find(c => c.op === 'replyAll').payload.subject, params.subject)
+assert.ok(!h.outlook.some(c => ['newMail', 'subject', 'send'].includes(c.op)), 'Reply drafting must retain the native thread and subject and never send')
+assert.equal(state.email.sourceUrl, 'https://outlook.cloud.microsoft/mail/sentitems/id/previous-report')
+assert.ok(h.outlook.find(c => c.op === 'body').payload.fallbackSignatureHtml.includes('Help desk'))
 assert.equal(h.outlook.find(c => c.op === 'attach').payload.files.length, 2)
 assert.equal(h.outlook.some(c => c.op === 'send'), false)
 console.log('PASS: Outlook failure preserves step 1; retry uses same batch without scans or downloads; draft is never sent')
@@ -181,11 +247,14 @@ assert.equal(defaults.outlook.find(c => c.op === 'attach').payload.files.length,
 assert.equal(defaults.network.length, 0)
 
 for (const selection of [['report'], ['dump'], ['summary']]) {
-  const one = harness({ enableEmail: true })
-  const single = await one.run(1, { ...params, slots: selection })
+  const one = harness()
+  const single = await one.run(1, { ...params, slots: selection, requestDelayMs: 200 })
   assert.equal(single.phase, 'ready', single.error)
   assert.deepEqual(Object.keys(one.store.handoffBatch.files), selection)
   assert.equal(one.downloads.length, 1)
+  const expectedDelay = { report: 1000, dump: 2000, summary: 1500 }[selection[0]]
+  assert.ok(one.requestedDelays.length > 0)
+  assert.ok(one.requestedDelays.every(ms => ms === expectedDelay), `${selection[0]} did not use its original delay`)
   if (selection.includes('report')) {
     assert.equal(one.network.some(r => r.operationName === 'getDownloadReportList' || r.variables.requestData.isDownload), false)
     assert.equal(one.downloads[0].filename, 'Pending_Mygate_Tickets_Report_02-01-2024.xlsx')
@@ -208,9 +277,9 @@ const missingSelection = { ...params }
 delete missingSelection.slots
 assert.equal((await invalid.request({ type: 'HANDOFF_GENERATE', cfg: missingSelection })).ok, false)
 assert.equal(invalid.network.length, 0)
-console.log('PASS: individual tools can run alone; invalid dependencies/all-off are rejected; email uses only the completed batch')
+console.log('PASS: individual tools use their original delays; invalid dependencies/all-off are rejected; email uses only the completed batch')
 
-const disabledEmail = harness()
+const disabledEmail = harness({ enableEmail: false })
 await disabledEmail.run(1, { ...params, slots: ['report'] })
 const readyBeforeDraft = clone(disabledEmail.store.handoffState)
 const blocked = await disabledEmail.request({ type: 'HANDOFF_DRAFT', cfg: { ...params, emailEnabled: true } })
@@ -218,7 +287,7 @@ assert.equal(blocked.ok, false)
 assert.match(blocked.error, /disabled/)
 assert.equal(disabledEmail.outlook.length, 0)
 assert.deepEqual(disabledEmail.store.handoffState, readyBeforeDraft)
-console.log('PASS: shipped build blocks email requests even after generation and ignores saved email-enable flags')
+console.log('PASS: the release kill switch blocks email requests and ignores saved email-enable flags')
 
 // New generation must never fall back to the previous batch after a failure.
 h.control.badReport = true
@@ -285,6 +354,7 @@ if (chromePath) {
     window.addEventListener('load', () => {
       setTimeout(() => verify(() => {
         check(document.getElementById('generateBtn').disabled, 'Generate unlocked before settings loaded');
+        check(document.getElementById('draftBtn').disabled, 'Email unlocked before generation');
         for (const slot of ['report','dump','analysis','summary']) check(document.getElementById(slot+'Toggle').disabled, 'Selection editable before settings loaded');
         document.getElementById('generateBtn').click();
         check(!sent.some(m=>m.type==='HANDOFF_GENERATE'), 'Generation started while settings were pending');
@@ -299,11 +369,16 @@ if (chromePath) {
       }), 600);
       setTimeout(() => verify(() => {
         check(sent.find(m=>m.type==='HANDOFF_GENERATE')?.cfg.slots.join(',')==='report', 'Run did not use report-only selection');
-        check(document.getElementById('draftBtn').disabled, 'Email unlocked after generation');
-        check(document.getElementById('emailFields').disabled, 'Email form is enabled');
-        check(!document.getElementById('emailOverlay').classList.contains('hidden'), 'Email overlay hidden');
+        check(!document.getElementById('requestDelayInput'), 'Shared speed slider is still visible');
+        check(!('requestDelayMs' in sent.find(m=>m.type==='HANDOFF_GENERATE').cfg), 'Popup still supplies a shared delay');
+        check(!document.getElementById('draftBtn').disabled, 'Email stayed locked after generation');
+        check(!document.getElementById('emailFields').disabled, 'Email form stayed disabled');
+        check(document.getElementById('emailOverlay').classList.contains('hidden'), 'Email overlay is blocking the form');
+        document.getElementById('ccInput').value = 'copy.first@example.invalid; copy.second@example.invalid; copy.third@example.invalid';
+        document.getElementById('ccInput').dispatchEvent(new Event('input'));
         document.getElementById('draftBtn').click();
-        check(!sent.some(m=>m.type==='HANDOFF_DRAFT'), 'Disabled email sent a request');
+        check(sent.some(m=>m.type==='HANDOFF_DRAFT' && m.cfg.slots.join(',')==='report'), 'Email button did not request a draft');
+        check(sent.find(m=>m.type==='HANDOFF_DRAFT').cfg.cc.join(',')==='copy.first@example.invalid,copy.second@example.invalid,copy.third@example.invalid', 'Popup did not pass all three Cc recipients');
       }), 1250);
       setTimeout(() => { document.body.dataset.testResult = failure || 'PASS'; }, 1500);
     });
@@ -314,6 +389,7 @@ if (chromePath) {
     `--user-data-dir=${path.join(preview, 'profile')}`, '--virtual-time-budget=2500', '--dump-dom', `file://${path.join(preview, 'popup.html')}`], { encoding: 'utf8', timeout: 30000, maxBuffer: 1024 * 1024 })
   assert.equal(browser.status, 0, browser.stderr)
   assert.match(browser.stdout, /data-test-result="PASS"/, browser.stdout.match(/data-test-result="[^"]*"/)?.[0] || 'Popup test did not finish')
-  console.log('PASS: real Chrome popup locks loading controls, immediately saves report-only selection, sends only report, and keeps email covered and disabled')
+  console.log('PASS: real Chrome popup locks loading controls, saves report-only selection, and enables email drafting after generation')
 } else console.log('SKIP: popup browser regression requires Chrome or Chromium; worker checks passed')
+await import('./outlook_dom_tests.mjs')
 console.log('All handoff integration checks passed.')

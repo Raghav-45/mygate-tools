@@ -1,69 +1,24 @@
 // Outlook orchestration retained inside the handoff extension.
 async function ensureOutlookTab() {
-  let tabs = await chrome.tabs.query({ url: OUTLOOK_TAB_URLS })
-  let tab = tabs.find((t) => t.active) || tabs[0]
-  if (!tab) {
-    tab = await chrome.tabs.create({ url: 'https://outlook.office.com/mail/', active: true })
-    for (let i = 0; i < 60; i++) {
-      const t = await chrome.tabs.get(tab.id).catch(() => null)
-      if (t && t.status === 'complete') break
-      await sleep(500)
-    }
-  } else {
-    await chrome.tabs.update(tab.id, { active: true })
-    await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {})
-  }
-  await sleep(400)
+  const [tab] = await chrome.tabs.query({ url: OUTLOOK_TAB_URLS, active: true, currentWindow: true })
+  if (!tab) throw new Error('Open your previous report email in Outlook Sent Items, then run step 2 from that tab.')
   return tab.id
 }
 
-async function openCompose(tabId) {
-  const attempt = async () => {
-    try {
-      return await ocCmd(tabId, 'newMail', {}, 45000)
-    } catch (e) {
-      // Preserve the content script's full payload (dump + deeplinks).
-      if (e && e.aio) return e.aio
-      return { ok: false, error: String((e && e.message) || e) }
+async function openReply(tabId, payload) {
+  let result
+  try {
+    result = await ocCmd(tabId, 'replyAll', payload, 45000)
+  } catch (error) {
+    result = error.aio || { ok: false, error: error.message }
+  }
+  if (!result?.ok) {
+    for (const line of String(result?.dump || '').split('\n').filter(Boolean).slice(0, 24)) {
+      await aioLog('OWA probe · ' + line, 'warn')
     }
+    throw new Error(result?.error || 'Could not open Reply all on the report email.')
   }
-
-  const logProbe = async (nm, max) => {
-    if (nm && nm.dump) {
-      for (const line of String(nm.dump).split('\n').slice(0, max)) {
-        await aioLog('OWA probe · ' + line, 'warn')
-      }
-    }
-  }
-
-  let nm = await attempt()
-
-  // Log the live probe of this Outlook build so selector mismatches are
-  // diagnosable directly from the run log.
-  await logProbe(nm, 40)
-
-  if (!nm.ok && Array.isArray(nm.deeplinks) && nm.deeplinks.length) {
-    await aioLog('New-mail click failed — opening the compose via the deep-link…', 'warn')
-    for (const url of nm.deeplinks) {
-      await chrome.tabs.update(tabId, { url, active: true }).catch(() => {})
-      await sleep(1500)
-      for (let i = 0; i < 40; i++) {
-        const t = await chrome.tabs.get(tabId).catch(() => null)
-        if (t && t.status === 'complete') break
-        await sleep(500)
-      }
-      nm = await attempt()
-      if (nm.ok) break
-      await logProbe(nm, 24)
-    }
-  }
-
-  if (!nm.ok) {
-    // Surface the final probe so the run log always shows what the page had.
-    await logProbe(nm, 30)
-    throw new Error('Could not open the New mail compose: ' + (nm.error || 'unknown'))
-  }
-  return nm
+  return result
 }
 
 const CAPS_PROBE_FN = () => ({
@@ -109,7 +64,9 @@ async function ocCmd(tabId, op, payload = {}, timeoutMs = 90000) {
     .catch(() => {})
   await sleep(100)
 
-  const frameId = OPCAPS[op] ? await frameFor(tabId, OPCAPS[op]) : undefined
+  // The report heading and Reply all controls belong to the main page. A
+  // sidebar iframe must never win the response before the real reply opens.
+  const frameId = op === 'replyAll' ? 0 : OPCAPS[op] ? await frameFor(tabId, OPCAPS[op]) : undefined
   const target = frameId != null ? { frameId } : {}
 
   let timer = null
@@ -128,7 +85,7 @@ async function ocCmd(tabId, op, payload = {}, timeoutMs = 90000) {
     ])
     if (res && res.error) {
       // Attach the full payload (dump/deeplinks/results) to the Error so
-      // callers like openCompose can still act on them.
+      // the reply opener can surface them in the run log.
       const e = new Error(res.error)
       e.aio = res
       throw e

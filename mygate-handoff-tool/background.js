@@ -5,6 +5,8 @@ importScripts('release-features.js', 'exceljs.min.js', 'constants.js', 'engine.j
 
 const SLOTS = ['report', 'dump', 'analysis', 'summary']
 const DEFAULT_SLOTS = ['report', 'dump', 'analysis']
+// Match the standalone tools' defaults; saved shared-slider values never override these.
+const REQUEST_DELAYS_MS = Object.freeze({ report: 1000, dump: 2000, summary: 1500 })
 const LABELS = { dump: 'Master Dump', report: 'Pending Report', summary: 'Summary Sheet', analysis: 'Analysis Dashboard' }
 const OUTLOOK_TAB_URLS = ['*://outlook.office.com/*', '*://outlook.office365.com/*', '*://outlook.live.com/*',
   '*://outlook.cloud.microsoft/*', '*://outlook.m365.cloud.microsoft/*']
@@ -32,20 +34,43 @@ async function aioLog(msg, kind = 'info') {
   await aioSetState({ log: [...state.log, { msg, kind }].slice(-160) })
 }
 function checkAbort() { if (aborted) throw new Error('__ABORT__') }
+function removeSpeedSettings(cfg) {
+  delete cfg.requestDelayMs
+  delete cfg.settingsVersion
+  return cfg
+}
+function migrateRecipientSettings(cfg) {
+  // Upgrade the original saved defaults when an existing installation updates.
+  const legacyAddresses = {
+    'pawar-pankat@dlf.in': 'pawar-pankaj@dlf.in',
+    'ashok kumar': 'tech.if3@sgvgroup.in',
+    'estate if3': 'estate.if3@sgvgroup.in',
+    'kirshan chander': 'apm2.if3@sgvgroup.in',
+    'anurag yadav': 'anurag.yadav@sgvgroup.in',
+    'anurag sharma': 'anurag.sharma@sgvgroup.in',
+  }
+  const key = value => String(value).trim().toLowerCase()
+  if (Array.isArray(cfg.to) && cfg.to.length === 2 &&
+      cfg.to.some(value => key(value) === 'gulati-divya@dlf.in') &&
+      cfg.to.some(value => key(value) === 'pawar-pankat@dlf.in')) {
+    cfg.to = [...self.EmailTemplate.DEFAULTS.to]
+  }
+  for (const field of ['to', 'cc']) {
+    if (Array.isArray(cfg[field])) cfg[field] = cfg[field].map(value => legacyAddresses[key(value)] || value)
+  }
+  return cfg
+}
 async function getCfg() {
   const { handoffCfg } = await chrome.storage.local.get('handoffCfg')
-  return { fromDate: '2024-01-01', toDate: todayStr(), slots: DEFAULT_SLOTS,
+  return migrateRecipientSettings(removeSpeedSettings({ fromDate: '2024-01-01', toDate: todayStr(), slots: DEFAULT_SLOTS,
     subject: self.EmailTemplate.DEFAULTS.subject, to: self.EmailTemplate.DEFAULTS.to,
-    cc: self.EmailTemplate.DEFAULTS.cc, includeTable: true, ...handoffCfg,
-    // Apply the new 1s default once to installations of the previous build.
-    requestDelayMs: handoffCfg?.settingsVersion === 2 ? handoffCfg.requestDelayMs : 1000,
-    settingsVersion: 2 }
+    cc: self.EmailTemplate.DEFAULTS.cc, includeTable: true, ...handoffCfg }))
 }
 function validateCfg(cfg) {
+  removeSpeedSettings(cfg)
   const validDate = s => /^\d{4}-\d{2}-\d{2}$/.test(s) && new Date(`${s}T00:00:00`).toString() !== 'Invalid Date'
   if (!validDate(cfg.fromDate) || !validDate(cfg.toDate) || cfg.fromDate > cfg.toDate) throw new Error('Please select valid From and Till dates, in order.')
   if (cfg.toDate > todayStr()) throw new Error('Report Till cannot be in the future.')
-  cfg.requestDelayMs = Math.round(Math.min(5000, Math.max(1000, Number(cfg.requestDelayMs) || 1000)) / 100) * 100
   cfg.slots = SLOTS.filter(s => (Array.isArray(cfg.slots) ? cfg.slots : DEFAULT_SLOTS).includes(s))
   if (!cfg.slots.length) throw new Error('Turn on at least one report to generate.')
   if (cfg.slots.includes('analysis') && !cfg.slots.includes('dump')) throw new Error('Analysis Dashboard requires Master Dump. Turn on Master Dump too.')
@@ -121,7 +146,7 @@ async function generate(cfg) {
     try {
       entry.status = 'generating'
       await aioSetState({ files, stepText: `Generating ${LABELS[slot]}…` })
-      let params = { fromDate: cfg.fromDate, toDate: cfg.toDate, requestDelayMs: cfg.requestDelayMs }
+      let params = { fromDate: cfg.fromDate, toDate: cfg.toDate, requestDelayMs: REQUEST_DELAYS_MS[slot] }
       if (slot === 'summary') {
         const [year, month] = cfg.toDate.split('-').map(Number)
         params = { ...params, year, month }
@@ -169,7 +194,7 @@ async function draft(cfg) {
   const batchSlots = batch?.slots || Object.keys(batch?.files || {})
   if (!state.generationReady || !batchSlots.length || batchSlots.some(s => !batch.files[s]?.base64)) throw new Error('Complete step 1 before drafting the email.')
   if (!Array.isArray(cfg.to) || !cfg.to.length) throw new Error('Enter at least one To recipient.')
-  await aioSetState({ phase: 'emailing', step: 2, pct: 5, error: null, email: null, stepText: 'Opening Outlook…' })
+  await aioSetState({ phase: 'emailing', step: 2, pct: 5, error: null, email: null, stepText: 'Opening the Outlook reply…' })
   checkAbort()
   const tabId = await ensureOutlookTab()
   const command = async (op, payload, timeout) => {
@@ -180,15 +205,18 @@ async function draft(cfg) {
     return result
   }
   await command('ping', {}, 15000)
-  await openCompose(tabId)
-  await aioSetState({ pct: 25, stepText: 'Filling recipients and subject…' })
+  // Only this batch's own reply can be retried. Keep Outlook's native reply
+  // subject and conversation headers so the daily reports remain in one thread.
+  const draftKey = JSON.stringify([batch.generatedAt, cfg.to, cfg.cc || [], cfg.subject])
+  const reply = await openReply(tabId, { draftKey, subject: cfg.subject })
+  await aioSetState({ pct: 25, stepText: 'Checking reply recipients…' })
   await command('recipients', { to: cfg.to, cc: cfg.cc || [] }, 180000)
-  await command('subject', { subject: cfg.subject || 'Mygate Complaint Summary.' })
   const et = self.EmailTemplate
   const c = batch.counts
   const tableHtml = cfg.includeTable !== false && c
     ? et.buildPendingTableHtml(c.rows, c.summary, c.fromFmt, c.toFmt) : null
-  await command('body', { html: et.buildBodyHtml({ tableHtml, signatureHtml: et.fallbackSignatureHtml() }), keepSignature: true })
+  await command('body', { html: et.buildBodyHtml({ tableHtml }),
+    fallbackSignatureHtml: et.fallbackSignatureHtml(), keepSignature: true })
   // Preserve the existing email format: dump + dashboard attachments,
   // with Pending Report counts in the body when that report was generated.
   const attachments = ['dump', 'analysis'].filter(slot => batch.files[slot]).map(slot => ({ slot, ...batch.files[slot] }))
@@ -199,9 +227,9 @@ async function draft(cfg) {
       throw new Error('Some files need manual attachment. The generated workbooks are in Downloads.')
     }
   }
-  await aioLog('Outlook draft prepared. Review it in Outlook and send when ready.', 'ok')
-  await aioSetState({ phase: 'done', pct: 100, email: { status: 'drafted' },
-    stepText: 'Email draft ready for review.', error: null })
+  await aioLog('Outlook reply draft prepared. Review it in Outlook and send when ready.', 'ok')
+  await aioSetState({ phase: 'done', pct: 100, email: { status: 'drafted', sourceUrl: reply.sourceUrl },
+    stepText: 'Reply draft ready for review.', error: null })
 }
 
 function launch(step, cfg) {
@@ -243,7 +271,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         break
       }
       case 'HANDOFF_SAVE_CFG':
-        await chrome.storage.local.set({ handoffCfg: message.cfg })
+        await chrome.storage.local.set({ handoffCfg: removeSpeedSettings({ ...message.cfg }) })
         respond({ ok: true })
         break
       case 'HANDOFF_GENERATE':

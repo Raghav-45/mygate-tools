@@ -6,17 +6,14 @@
  * compose window just like a human would:
  *
  *   ping        → verifies the script is alive
- *   newMail     → opens a new compose: reuse → button → deep-link fallback.
- *                 On failure it returns a live DOM probe ("dump") of the
- *                 visible buttons so the run log shows exactly what the
- *                 current Outlook build calls its controls.
+ *   replyAll    → replies to the open report in Sent Items; retries reuse
+ *                 only the reply created for the same report batch.
  *   recipients  → fills To/Cc with verification that each value committed
  *   subject     → fills the subject
  *   body        → inserts the greeting/table/signature HTML (preserving the
  *                 Outlook signature that Outlook already inserted)
  *   attach      → attaches files via hidden file input, synthetic paste,
  *                 then drag&drop — verifying each attachment chip appears
- *   send        → clicks Send (used only when auto-send is enabled)
  *   status      → reports current compose state
  */
 
@@ -25,6 +22,7 @@
 
   if (window.__AIO_OUTLOOK_INJECTED) return
   window.__AIO_OUTLOOK_INJECTED = true
+  const signatures = new WeakMap()
 
   function sleep(ms) {
     return new Promise((r) => setTimeout(r, ms))
@@ -100,7 +98,7 @@
       for (const el of els) {
         if (el.children.length > 0) continue
         const t = (el.textContent || '').trim()
-        if (t && rx.test(t) && (isVisible(el) || true)) {
+        if (t && rx.test(t) && isVisible(el)) {
           const btn = el.closest('button, [role="button"]')
           if (btn) return btn
         }
@@ -110,6 +108,11 @@
   }
 
   function setNativeValue(input, value) {
+    if (input.isContentEditable) {
+      input.append(document.createTextNode(value))
+      input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }))
+      return
+    }
     const proto =
       input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
     const desc = Object.getOwnPropertyDescriptor(proto, 'value')
@@ -251,6 +254,9 @@
         ? 'input[aria-label="Cc"], textarea[aria-label="Cc"], input[aria-label="CC"], [role="combobox"][aria-label="Cc"], [role="textbox"][aria-label="Cc"], [contenteditable="true"][aria-label="Cc"], input[aria-label*="cc" i], textarea[aria-label*="cc" i], input[placeholder*="cc" i]'
         : 'input[aria-label="To"], textarea[aria-label="To"], [role="combobox"][aria-label="To"], [role="textbox"][aria-label="To"], [contenteditable="true"][aria-label="To"], input[aria-label*="To " i], textarea[aria-label^="To" i], input[aria-label^="To" i], input[placeholder*="name, group, or email" i], input[placeholder*="email address" i]'
     const cands = [...document.querySelectorAll(sel)].filter(isVisible)
+      .filter(el => kind !== 'cc' || !/\bbcc\b/i.test(`${labelOf(el)} ${el.getAttribute('placeholder') || ''}`))
+    const exactCands = cands.filter(el => (el.getAttribute('aria-label') || '').trim().toLowerCase() === exact.toLowerCase())
+    if (exactCands.length) return exactCands[exactCands.length - 1]
     if (cands.length) return cands[cands.length - 1]
 
     const inputs = [...document.querySelectorAll('input:not([type="hidden"]):not([type="file"]), textarea')].filter((el) => isVisible(el))
@@ -313,30 +319,50 @@
     el.dispatchEvent(new KeyboardEvent('keyup', opts))
   }
 
-  function recipientChipSeen(value) {
-    const stem = escapeRegExp(value.split('@')[0].trim()).slice(0, 10)
-    if (!stem) return false
-    const root = composeRootEl() || document
-    try {
-      return new RegExp(stem, 'i').test(root.innerText || '')
-    } catch (e) {
-      return false
-    }
-  }
-
-  function escapeRegExp(s) {
-    return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  function recipientChipSeen(value, field) {
+    const needle = String(value || '').trim().toLowerCase()
+    if (!needle) return false
+    const input = recipientInput(field)
+    const root = input?.isContentEditable ? input : input?.closest('[role="group"]') || input?.parentElement
+    if (!root) return false
+    return [...root.querySelectorAll('._Entity, [contenteditable="false"], [role="listitem"], [data-email-address]')].some(chip => {
+      const text = [chip.textContent, chip.getAttribute('title'), chip.getAttribute('aria-label'), chip.getAttribute('data-email-address')].join(' ').toLowerCase()
+      return text.includes(needle)
+    })
   }
 
   function fieldHasText(el) {
     if (!el) return false
-    const t = el.value != null ? el.value : el.textContent || ''
-    return !!String(t).trim()
+    let t = el.value
+    if (t == null) {
+      const copy = el.cloneNode(true)
+      copy.querySelectorAll('._Entity, [contenteditable="false"], [role="listitem"]').forEach(chip => chip.remove())
+      t = copy.textContent || ''
+    }
+    return !!String(t).replace(/[\s\u200b-\u200d\ufeff]/g, '')
   }
 
   function clearField(el) {
     try {
       el.focus()
+      if (el.isContentEditable) {
+        // Current Outlook stores committed recipients inside the editor. Clear
+        // only free text and place the caret after the retained recipient chips.
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+        const freeText = []
+        while (walker.nextNode()) {
+          if (!walker.currentNode.parentElement.closest('._Entity, [contenteditable="false"]')) freeText.push(walker.currentNode)
+        }
+        freeText.forEach(node => { node.textContent = '' })
+        const range = document.createRange()
+        range.selectNodeContents(el)
+        range.collapse(false)
+        const selection = window.getSelection()
+        selection.removeAllRanges()
+        selection.addRange(range)
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }))
+        return
+      }
       if (el.setSelectionRange && el.value != null) el.setSelectionRange(0, (el.value || '').length)
       document.execCommand('selectAll', false, null)
       document.execCommand('delete')
@@ -379,6 +405,7 @@
       const v = String(value || '').trim()
       if (!v) continue
       let el = recipientInput(field)
+      if (!el && field === 'to') el = await until(() => recipientInput('to'), { tries: 20, delay: 250 })
       if (!el && field === 'cc') {
         ensureCcRow()
         el = await until(() => recipientInput('cc'), { tries: 12, delay: 200 })
@@ -388,9 +415,8 @@
         continue
       }
 
-      // Fast path: this address is already present (committed chip or leftover
-      // text OWA resolves on send) — nothing to do. Makes reuse runs instant.
-      if (recipientChipSeen(v)) {
+      // Only a committed chip in this recipient field counts as already filled.
+      if (recipientChipSeen(v, field)) {
         results.push({ value: v, ok: true, already: true })
         continue
       }
@@ -430,7 +456,7 @@
         // React swaps the input node when a chip lands — re-grab it so the
         // emptiness check reads the LIVE field.
         el = recipientInput(field) || el
-        committed = !fieldHasText(el)
+        committed = recipientChipSeen(v, field) && !fieldHasText(el)
         if (committed) break
         try {
           el.focus()
@@ -459,9 +485,10 @@
     return new File([bytes], f.name, { type: mime })
   }
 
-  function chipStem(name) {
-    const stem = name.replace(/\.xlsx?$/i, '').toLowerCase()
-    return stem.replace(/\s*\(\d+\)$/, '')
+  function fileNameKey(name) {
+    return String(name).toLowerCase()
+      .replace(/\s*\(\d+\)(?=\.(?:xlsx?|csv)\b)/g, '')
+      .replace(/[^a-z0-9]/g, '')
   }
 
   // Elements of the real attachment strip inside the compose. Never reads the
@@ -493,9 +520,7 @@
       if (accepted.some((c) => c.el.contains(el))) continue
       const attrs = `${el.getAttribute('title') || ''} ${el.getAttribute('aria-label') || ''}`.toLowerCase()
       const isCard = /\.(xls|csv)/.test(attrs)
-      const compact = `${attrs} ${el.textContent || ''}`
-        .toLowerCase()
-        .replace(/[^a-z0-9]/g, '')
+      const compact = fileNameKey(`${attrs} ${el.textContent || ''}`)
       if (!compact) continue
       if (!isCard) {
         // Non-card matches must be leaf + chip-sized to count
@@ -510,11 +535,10 @@
   // Real chip check: the file's compact name must appear on an attachment
   // LIST element — not in a toast, a pane, the subject or the body.
   function chipVerified(f) {
-    const nameCompact = chipStem(f.name).replace(/[^a-z0-9]/g, '')
+    const nameCompact = fileNameKey(f.name)
     if (!nameCompact) return false
-    const short = nameCompact.slice(0, 14)
     for (const c of chipList()) {
-      if (c.compact.includes(short)) return true
+      if (c.compact.includes(nameCompact)) return true
     }
     return false
   }
@@ -720,7 +744,7 @@
   // a removal only when the chip count actually drops afterwards.
   function chipMatchesAnyFile(c, files) {
     for (const f of files) {
-      const compact = chipStem(f.name).replace(/[^a-z0-9]/g, '').slice(0, 14)
+      const compact = fileNameKey(f.name)
       if (compact && c.compact.includes(compact)) return true
     }
     return false
@@ -800,48 +824,41 @@
       return { ok: true, url: location.href }
     },
 
-    async newMail() {
-      // An open compose (even the empty "Draft saved" one sitting in the tab)
-      // is reused as-is.
-      if (composeIsOpen()) return { ok: true, reused: true }
-
-      const attempts = [
-        () => findByLabel(['^\\s*new\\s*mail', '^new mail', 'new mail'], { dataIdRx: 'newmail|new-mail|new_mail' }),
-        () => findByVisibleText(['^New mail', '^New email']),
-        // The current OWA build labels the split-button "$ New" — exactly "New"
-        // inside the mail module. Exact-anchored so "New tab"/"New chat" never match.
-        () => findByLabel(['^\\s*new\\s*$']),
-        () => findByVisibleText(['^New$']),
-      ]
-      let btn = null
-      // Outlook may still be rendering — give the buttons a few rounds to
-      // appear before giving up (the deep-link fallback then takes over).
-      for (let round = 0; round < 4 && !btn; round++) {
-        if (round) {
-          await sleep(700)
-          if (composeIsOpen()) return { ok: true, reused: true }
-        }
-        for (const a of attempts) {
-          btn = a()
-          if (btn) break
-        }
+    async replyAll(p = {}) {
+      if (!p.draftKey) return { ok: false, error: 'The generated report batch could not be identified. Please retry step 2.' }
+      const editor = bodyEditable()
+      if (editor || composeIsOpen()) {
+        const ownReply = [editor, subjectInput()].some(el =>
+          el?.getAttribute('data-mygate-handoff-draft') === p.draftKey &&
+          el.getAttribute('data-mygate-handoff-reply') === 'true')
+        if (ownReply) return { ok: true, reused: true,
+          sourceUrl: (editor || subjectInput()).getAttribute('data-mygate-handoff-reply-source') }
+        return { ok: false, error: 'Another draft is open. Finish or close it, then open the previous report in Sent Items and retry step 2.' }
       }
 
-      if (btn) {
-        btn.click()
-        const ready = await until(composeIsOpen, { tries: 40, delay: 250 })
-        if (ready) return { ok: true }
+      const source = new URL(location.href)
+      if (!/\/mail\/(?:\d+\/)?sentitems\/id\/[^/]+/i.test(source.pathname)) {
+        return { ok: false, error: 'Open your previous report email in Outlook Sent Items, then retry step 2 from that tab.' }
       }
-
-      // Everything else failed — hand the deep-link compose URL back to the
-      // background so it can navigate this same tab (server-rendered opener
-      // that works on every OWA surface) and try once more.
-      return {
-        ok: false,
-        error: 'New mail button not found',
-        deeplinks: [`${location.origin}/mail/deeplink/compose`, `${location.origin}/mail/0/deeplink/compose`],
-        dump: diagnostics(),
+      const normalizeSubject = value => String(value || '').trim().replace(/^(?:(?:re|fw|fwd):\s*)+/i, '').trim().toLowerCase()
+      const expectedSubject = normalizeSubject(p.subject)
+      const pane = document.querySelector('[role="main"][aria-label="Reading Pane"]') || document
+      const heading = [...pane.querySelectorAll('[role="heading"], h1, h2, h3')].find(el =>
+        isVisible(el) && normalizeSubject(el.textContent) === expectedSubject)
+      if (!expectedSubject || !heading) {
+        return { ok: false, error: 'The open sent email does not match the report subject. Open the correct report and retry step 2.' }
       }
+      const button = findByLabel(['^reply all$', '^reply to all$']) || findByVisibleText(['^Reply all$', '^Reply to all$'])
+      if (!button) return { ok: false, error: 'Reply all is unavailable on the open report.', dump: diagnostics() }
+      button.click()
+      const ready = await until(() => bodyEditable() && recipientInput('to'), { tries: 40, delay: 250 })
+      if (!ready) return { ok: false, error: 'Outlook did not open the reply-all editor.', dump: diagnostics() }
+      for (const el of [bodyEditable(), subjectInput()].filter(Boolean)) {
+        el.setAttribute('data-mygate-handoff-draft', p.draftKey)
+        el.setAttribute('data-mygate-handoff-reply', 'true')
+        el.setAttribute('data-mygate-handoff-reply-source', source.href)
+      }
+      return { ok: true, reused: false, sourceUrl: source.href }
     },
 
     async recipients(p) {
@@ -878,11 +895,26 @@
       if (!el) return { ok: false, error: 'Message body not found', dump: diagnostics() }
       el.focus()
       await sleep(180)
-      const existing = el.innerHTML
-      const hasContent = existing && existing.replace(/<br\s*\/?>/gi, '').replace(/\s|&nbsp;/g, '').length > 0
+      if (!signatures.has(el)) {
+        // Retain the native reply's signature and any quoted history exactly
+        // once; never capture the previously inserted report on a retry.
+        const priorBody = el.querySelector('[data-mygate-handoff-body]')
+        const priorSignature = el.querySelector('[data-mygate-handoff-signature]')
+        signatures.set(el, priorBody ? priorSignature?.innerHTML || '' : el.innerHTML)
+      }
+      const existing = signatures.get(el)
+      const signatureContent = document.createElement('div')
+      signatureContent.innerHTML = existing || ''
+      const hasContent = !!(signatureContent.textContent.replace(/\s|\u00a0/g, '') || signatureContent.querySelector('img, svg, hr'))
       const keepSig = p.keepSignature !== false && hasContent
-      document.execCommand('selectAll')
-      const html = keepSig ? String(p.html) + '<br>' + existing : String(p.html)
+      const range = document.createRange()
+      range.selectNodeContents(el)
+      const selection = window.getSelection()
+      selection.removeAllRanges()
+      selection.addRange(range)
+      const signature = keepSig ? existing : String(p.fallbackSignatureHtml || '')
+      const html = '<div data-mygate-handoff-body="true">' + String(p.html) + '</div>' +
+        (signature ? '<br>'.repeat(10) + '<div data-mygate-handoff-signature="true">' + signature + '</div>' : '')
       const done = document.execCommand('insertHTML', false, html)
       if (!done) el.innerHTML = html
       el.blur()
@@ -901,15 +933,14 @@
       removed = removed.concat(await dedupeChips())
 
       // 2) Skip what's already there (a reused draft keeps old chips)
-      const already = files.filter((f) => chipVerified(f))
+      const already = new Set(files.filter((f) => chipVerified(f)).map(f => f.name))
       const missing = files.filter((f) => !chipVerified(f))
 
       // 3) Batch all missing files through one change event, then catch the
       //    leftovers one by one with strict single-dispatch strategies
       if (missing.length >= 2) await attachBatch(missing, attachmentCount())
-      const results = already.map((f) => ({ name: f.name, slot: f.slot, ok: true, already: true }))
       for (const f of files.filter((x) => !chipVerified(x))) {
-        results.push({ ...(await syncAttachOne(f)), slot: f.slot })
+        await syncAttachOne(f)
         await sleep(250)
       }
 
@@ -919,17 +950,11 @@
       const prunedAfter = await pruneForeignChips(files)
       removed = removed.concat(prunedAfter)
 
-      const okAll = results.every((r) => r.ok)
+      // Batch uploads must be represented too. Only the final visible chips
+      // determine success, including files that arrived during fallback attempts.
+      const results = files.map(f => ({ name: f.name, slot: f.slot, ok: chipVerified(f), already: already.has(f.name) }))
+      const okAll = results.every((r) => r.ok) && chipList().every(c => chipMatchesAnyFile(c, files))
       return { ok: okAll, results, deduped: removed.length, count: attachmentCount() }
-    },
-
-    async send() {
-      let btn = findByLabel(['^send$', '^send ', 'send ^', '^发送$'])
-      if (!btn) btn = findByVisibleText(['^Send$', 'Send'])
-      if (!btn) return { ok: false, error: 'Send button not found', dump: diagnostics() }
-      btn.click()
-      const gone = await until(() => !composeIsOpen(), { tries: 16, delay: 500 })
-      return { ok: true, closedCompose: !!gone }
     },
 
     async status() {

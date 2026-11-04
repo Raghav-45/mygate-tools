@@ -105,39 +105,29 @@
           <label class="tool-toggle"><input type="checkbox" id="analysisToggle" checked disabled /> Analysis Dashboard</label>
           <label class="tool-toggle"><input type="checkbox" id="summaryToggle" disabled /> Summary Sheet</label>
         </div>
-        <p class="helper-text" id="selectionHint" role="status">Runs in the order shown. Analysis requires Master Dump.</p>
-        <p class="helper-text">Summary covers the month of Report Till. Analysis uses the new dump.</p>
-        <div class="settings-drawer hidden" id="settingsCollapse">
-          <div class="drawer-header"><h4>⚙️ MyGate API Speed</h4><span class="badge-opt">Optional</span></div>
-          <div class="delay-group">
-            <div class="delay-lbl-row"><label for="requestDelayInput">Delay Between API Queries</label><span class="delay-val" id="delayValText">1.0s</span></div>
-            <input type="range" id="requestDelayInput" class="custom-range" min="1" max="5" step="0.1" value="1" />
-            <span class="helper-text">Lower is faster but heavier on the MyGate API</span>
-          </div>
-        </div>
+        <p class="helper-text hidden" id="selectionHint" role="status"></p>
         <div class="action-btn-wrap">
           <button type="button" class="btn-primary-yellow" id="generateBtn" disabled>Generate &amp; Download 3 Files</button>
         </div>
         <p class="helper-text" id="generationStatus" role="status">Loading report selection…</p>
         <div class="card-footer-links">
-          <button type="button" class="btn-text-link" id="settingsToggleBtn">API Speed</button>
           <a href="https://dashboard.mygate.com/home/society/generatedReports" target="_blank" class="btn-text-link">MyGate Reports →</a>
         </div>
       </section>
 
-      <section class="card main-form-card email-disabled" id="emailCard">
-        <fieldset class="email-fields" id="emailFields" disabled>
-        <h3>Step 2 · Prepare Outlook email</h3>
-        <div class="notched-input-group"><label class="notched-label" for="subjectInput">Subject</label><input type="text" id="subjectInput" class="notched-input" /></div>
+      <section class="card main-form-card" id="emailCard">
+        <fieldset class="email-fields" id="emailFields">
+        <h3>Step 2 · Reply to previous report</h3>
+        <div class="notched-input-group"><label class="notched-label" for="subjectInput">Report subject to reply to</label><input type="text" id="subjectInput" class="notched-input" /></div>
         <div class="notched-input-group"><label class="notched-label" for="toInput">To (separate with ;)</label><input type="text" id="toInput" class="notched-input" /></div>
         <div class="notched-input-group"><label class="notched-label" for="ccInput">Cc (separate with ;)</label><input type="text" id="ccInput" class="notched-input" /></div>
         <label class="helper-text"><input type="checkbox" id="includeTableChk" checked /> Pending Tickets table in the email body</label>
-        <p class="helper-text">Attaches Master Dump and Analysis Dashboard when generated. The tickets table needs Pending Report. Review the draft in Outlook before sending.</p>
-        <div class="action-btn-wrap"><button type="button" class="btn-primary-yellow" id="draftBtn" disabled>Prepare Email Draft</button></div>
-        <p class="helper-text" id="emailStatus" role="status">Email is disabled until a future update.</p>
+        <p class="helper-text">Open your previous report in Outlook Sent Items, then use this button from that tab. Reply all keeps the conversation and recipients.</p>
+        <div class="action-btn-wrap"><button type="button" class="btn-primary-yellow" id="draftBtn" disabled>Prepare Reply Draft</button></div>
+        <p class="helper-text" id="emailStatus" role="status">Complete step 1 to enable email drafting.</p>
         <p class="helper-text">If Outlook fails, retry this step or attach the downloaded files manually.</p>
         </fieldset>
-        <div class="email-overlay" id="emailOverlay" role="note">
+        <div class="email-overlay hidden" id="emailOverlay" role="note">
           <div class="email-overlay-message">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2" /><path d="M8 10V6a4 4 0 0 1 8 0v4" /></svg>
             <strong>Email is coming in a future update</strong>

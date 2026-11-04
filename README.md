@@ -18,12 +18,21 @@ Five tools for the MyGate admin dashboard — all Chrome (Manifest V3) extension
    Summary is off by default, so the default batch downloads three files. Analysis
    uses the newly generated dump: turning Dump off also turns Analysis off;
    turning Analysis on enables Dump. Summary covers the month of Report Till,
-   using the standalone Summary tool's existing rules. The API delay defaults to
-   **1.0 second**, adjustable from 1.0–5.0 seconds in **0.1-second** increments.
-2. **Email is disabled in v1.0.0.** The Outlook card has a blocking overlay and
-   disabled controls. Attach the downloaded reports manually for now. A later
-   extension release can enable it by changing `release-features.js`; saved settings
-   cannot enable it, and the background rejects draft requests in this build.
+   using the standalone Summary tool's existing rules. Each generator uses its
+   original delay: **Pending Report 1 second**, **Master Dump 2 seconds**, and
+   **Summary Sheet 1.5 seconds**. Analysis runs locally. There is no shared speed
+   slider, and previously saved shared-delay settings are ignored.
+2. Open the previous report email in **Outlook → Sent Items**. From that Outlook
+   tab, open the extension and click **Prepare Reply Draft**. The tool checks the
+   open report's subject and uses Outlook's **Reply all** so the daily report stays
+   in the same conversation. It keeps the native reply subject, existing recipients,
+   signature and quoted history, checks/adds the configured To/Cc addresses,
+   inserts the new Pending Tickets table when available, and attaches the newly
+   generated Master Dump and Analysis. Review the draft and send it manually.
+   If the open email is wrong, another draft is open, or Reply all is unavailable,
+   step 2 stops. Retries reuse only the reply belonging to the current batch,
+   without regenerating reports or duplicating the body and attachments. Step 1
+   downloads remain available if Outlook fails.
 
 Step 1 never opens Outlook. Report selections are locked until settings load and
 saved immediately when toggled. A run uses its explicit current selection, so a

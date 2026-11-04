@@ -23,12 +23,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     $('generateBtn').disabled = busy || !count
     $('generateBtn').textContent = `Generate & Download ${count} ${count === 1 ? 'File' : 'Files'}`
     for (const slot of slots) $(`${slot}Toggle`).disabled = busy
-    $('selectionHint').textContent = count ? 'Runs in the order shown. Analysis requires Master Dump.' : 'Turn on at least one report to generate.'
+    $('selectionHint').textContent = count ? '' : 'Select at least one report.'
+    $('selectionHint').classList.toggle('hidden', count > 0)
   }
   function collectCfg() {
     return { fromDate: $('fromDate').value, toDate: $('toDate').value,
-      slots: selectedSlots(), settingsVersion: 2,
-      requestDelayMs: Number($('requestDelayInput').value) * 1000,
+      slots: selectedSlots(),
       subject: $('subjectInput').value.trim(), to: recipients('toInput'), cc: recipients('ccInput'),
       includeTable: $('includeTableChk').checked }
   }
@@ -42,7 +42,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateControls()
     $('draftBtn').disabled = !emailEnabled || busy || !state.generationReady
     $('draftBtn').textContent = state.generationReady && state.step === 2 && ['failed', 'aborted'].includes(state.phase)
-      ? 'Retry Email Draft' : 'Prepare Email Draft'
+      ? 'Retry Reply Draft' : 'Prepare Reply Draft'
     $('progressContainer').classList.toggle('hidden', !busy)
     $('progressStepText').textContent = state.stepText || 'Starting…'
     const pct = Math.round(state.pct || 0)
@@ -56,9 +56,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         ? 'Step 1 did not finish. Files already downloaded remain available; generate again to complete the selected files.'
         : 'Sign in to MyGate, then generate the reports.'
     $('emailStatus').textContent = !emailEnabled ? 'Email is disabled until a future update.'
-      : state.phase === 'done' ? '✓ Email draft ready. Review it in Outlook and send.'
-      : state.phase === 'emailing' ? 'Preparing the Outlook draft…'
-      : state.generationReady ? 'Ready to draft. Email retries use this batch without generating reports again.'
+      : state.phase === 'done' ? '✓ Reply draft ready. Review it in Outlook and send.'
+      : state.phase === 'emailing' ? 'Preparing the Outlook reply…'
+      : state.generationReady ? 'Open the previous report in Outlook Sent Items, then prepare the reply.'
       : 'Complete step 1 to enable email drafting.'
     if (state.error) alert((state.step === 2 ? 'Email step: ' : '') + state.error +
       (state.generationReady ? ' Your downloads are still available.' : ''))
@@ -97,8 +97,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const cfg = initial.cfg
     $('fromDate').value = cfg.fromDate
     $('toDate').value = cfg.toDate
-    $('requestDelayInput').value = cfg.requestDelayMs / 1000
-    $('delayValText').textContent = `${Number($('requestDelayInput').value).toFixed(1)}s`
     $('subjectInput').value = cfg.subject
     $('toInput').value = (cfg.to || []).join('; ')
     $('ccInput').value = (cfg.cc || []).join('; ')
@@ -107,13 +105,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     initialized = true
     render(initial.state)
   } catch (err) { alert(err.message) }
-  for (const id of ['fromDate', 'toDate', 'requestDelayInput', 'subjectInput', 'toInput', 'ccInput', 'includeTableChk', ...slots.map(s => `${s}Toggle`)]) {
+  for (const id of ['fromDate', 'toDate', 'subjectInput', 'toInput', 'ccInput', 'includeTableChk', ...slots.map(s => `${s}Toggle`)]) {
     $(id).addEventListener('input', () => {
       if (!initialized) return
       if (id === 'dumpToggle' && !$('dumpToggle').checked) $('analysisToggle').checked = false
       if (id === 'analysisToggle' && $('analysisToggle').checked) $('dumpToggle').checked = true
       updateControls()
-      $('delayValText').textContent = `${Number($('requestDelayInput').value).toFixed(1)}s`
       clearTimeout(saving)
       const cfg = collectCfg()
       const save = () => call('HANDOFF_SAVE_CFG', { cfg }).catch(err => alert(err.message))
@@ -153,7 +150,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       $('abortBtn').textContent = 'Stopping…'
     } catch (err) { alert(err.message) }
   })
-  $('settingsToggleBtn').addEventListener('click', () => $('settingsCollapse').classList.toggle('hidden'))
   $('aboutIconBtn').addEventListener('click', () => $('aboutModal').classList.remove('hidden'))
   $('closeModalBtn').addEventListener('click', () => $('aboutModal').classList.add('hidden'))
   $('aboutModal').addEventListener('click', e => { if (e.target === $('aboutModal')) $('aboutModal').classList.add('hidden') })
