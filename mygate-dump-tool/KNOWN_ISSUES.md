@@ -1,17 +1,18 @@
 # Known Issues & Architectural Behaviors
 
-## 1. AWS CloudFront Queue Timeout Limit
+## 1. Cloud Export Completion Timeout
 
 ### Description
-When requesting a multi-year dump export, MyGate's backend schedules an asynchronous background job on AWS CloudFront to generate the downloadable `.xlsx` report files.
+When requesting a multi-year dump export, MyGate's backend schedules asynchronous background jobs to generate the downloadable `.xlsx` report files, one date range at a time.
 
 For large residential societies with tens of thousands of helpdesk tickets per year, generating these multi-year reports on MyGate's cloud servers can occasionally take several minutes.
 
 ### Behavior & Mitigation
-- The **MyGate Dump Tool** is currently configured to poll `getDownloadReportList` up to **60 times** (approximately 2 minutes at standard polling speed) waiting for MyGate's AWS CloudFront server to return a `Success` status with the S3 download link.
-- If MyGate's cloud server takes longer than 2 minutes due to high server concurrency or massive ticket volume, the specific chunk will timeout and display as `"Failed / Timed out"` in the status grid.
+- The **MyGate Dump Tool** polls `getDownloadReportList` up to **45 times**, with a default **2-second delay** between checks (about 90 seconds of waiting, plus request time). It accepts only a new successful entry with matching dates and statuses, and rejects reused cloud-file links.
+- If the new export does not become ready in time, the run displays `Stopped`. No partial Master Dump is saved, no later date ranges are requested, and dependent Analysis is blocked. Files already downloaded by other selected tools remain available.
+- Each date range gets one export request. Status checks do not generate reports; there are no automatic export retries.
 
 ### Recommended Workaround
-If a yearly chunk times out due to extreme data volume:
-1. Increase the **API Polling Speed** slider in the extension settings to `3.0s` or `4.0s` to give MyGate's cloud workers more time to process the job without hitting rate limits.
-2. Alternatively, generate the export in smaller 1-year or 2-year increments during off-peak hours when MyGate's AWS queue processes reports instantaneously.
+If a yearly chunk times out, inspect the existing request on MyGate's Generated Reports page and allow it to finish rather than immediately requesting another export. The stopped run does not resume automatically.
+
+For a future run of the standalone Dump Tool, its **API Polling Speed** setting can lengthen the interval between status checks. Handoff keeps the original 2-second default.

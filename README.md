@@ -43,7 +43,12 @@ saved immediately when toggled. A run uses its explicit current selection, so a
 report-only run never falls back to saved/default tools. The temporary batch
 for step 2 is replaced on each generation and cleared when Chrome starts again;
 there is no saved-file picker, import, or reuse mode. Downloaded files remain on disk.
-Email settings persist. The existing standalone tools are unchanged.
+Email settings persist. Master Dump waits for a new cloud export entry and checks
+ticket dates, statuses, and duplicate IDs. It also verifies the row count against a
+separate read-only MyGate count for that range. It stops on an invalid export or timeout
+without requesting another export or saving a partial dump. Pending Report and
+Master Dump counts are independent; differences between them do not block the
+handoff. See [dump timeout behavior](mygate-dump-tool/KNOWN_ISSUES.md).
 
 Build with `./build_release.sh`, then unzip `dist/mygate-handoff-tool.zip` and load
 the folder at `chrome://extensions` using **Load unpacked**. You can also load
@@ -60,7 +65,8 @@ node mygate-handoff-tool/tests/run_tests.mjs
 ```
 
 These build actual workbooks using synthetic API responses and check dump-to-analysis
-handoff, independent steps, email retries, failed downloads, partial dumps and aborts.
+handoff, independent report counts, stale or reused cloud files, duplicate tickets,
+email retries, failed downloads, partial dumps and aborts.
 Live MyGate and Outlook verification still requires signed-in browser accounts.
 
 For personal distribution without Chrome Web Store registration, use the existing
