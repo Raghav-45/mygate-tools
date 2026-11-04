@@ -15,7 +15,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!result?.ok) throw new Error(result?.error || 'Extension background is unavailable. Please try again.')
     return result
   }
-  const recipients = id => $(id).value.split(/[;,]/).map(s => s.trim()).filter(Boolean)
   const selectedSlots = () => slots.filter(slot => $(`${slot}Toggle`).checked)
   function updateControls() {
     const busy = !initialized || starting || ['generating', 'emailing'].includes(state?.phase)
@@ -29,7 +28,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   function collectCfg() {
     return { fromDate: $('fromDate').value, toDate: $('toDate').value,
       slots: selectedSlots(),
-      subject: $('subjectInput').value.trim(), to: recipients('toInput'), cc: recipients('ccInput'),
+      subject: $('subjectInput').value.trim(),
       includeTable: $('includeTableChk').checked }
   }
   function alert(message, error = true) {
@@ -98,14 +97,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     $('fromDate').value = cfg.fromDate
     $('toDate').value = cfg.toDate
     $('subjectInput').value = cfg.subject
-    $('toInput').value = (cfg.to || []).join('; ')
-    $('ccInput').value = (cfg.cc || []).join('; ')
     $('includeTableChk').checked = cfg.includeTable !== false
     for (const slot of slots) $(`${slot}Toggle`).checked = (cfg.slots || ['report', 'dump', 'analysis']).includes(slot)
     initialized = true
     render(initial.state)
   } catch (err) { alert(err.message) }
-  for (const id of ['fromDate', 'toDate', 'subjectInput', 'toInput', 'ccInput', 'includeTableChk', ...slots.map(s => `${s}Toggle`)]) {
+  for (const id of ['fromDate', 'toDate', 'subjectInput', 'includeTableChk', ...slots.map(s => `${s}Toggle`)]) {
     $(id).addEventListener('input', () => {
       if (!initialized) return
       if (id === 'dumpToggle' && !$('dumpToggle').checked) $('analysisToggle').checked = false

@@ -125,24 +125,12 @@ if (!browser) {
         result = await run('replyAll', {...replyPayload,draftKey:'batch-2'});
         check(!result.ok && replyClicks === 1 && newMailClicks === 0, 'A new report batch reused the old reply draft');
 
-        const recipients = ['first@example.invalid', 'second@example.invalid'];
-        result = await run('recipients', {to:recipients,cc:[]});
-        check(result.ok && result.resTo.length === 2, 'Accepted recipient chips were treated as unfinished text');
-        check(to.querySelectorAll('._Entity').length === 2, 'Typing the second recipient removed the first one');
-        result = await run('recipients', {to:recipients,cc:[]});
-        check(result.ok && result.resTo.every(r => r.already) && to.querySelectorAll('._Entity').length === 2, 'Retry duplicated recipient chips');
-        const nativeExec = document.execCommand.bind(document);
-        document.execCommand = (command, ...args) => command === 'insertText' ? false : nativeExec(command, ...args);
-        result = await run('recipients', {to:['third@example.invalid'],cc:[]});
-        document.execCommand = nativeExec;
-        check(result.ok && to.querySelectorAll('._Entity').length === 3, 'Recipient typing fallback removed earlier recipients');
-
-        const copies = ['copy.first@example.invalid', 'copy.second@example.invalid', 'copy.third@example.invalid'];
-        result = await run('recipients', {to:recipients,cc:copies});
-        check(result.ok && result.resCc.length === 3 && cc.querySelectorAll('._Entity').length === 3, 'Multiple Cc recipients were not committed in the Cc field');
-        check(document.getElementById('bcc').value === '' && to.querySelectorAll('._Entity').length === 3, 'Cc typing changed To or Bcc');
-        result = await run('recipients', {to:recipients,cc:copies});
-        check(result.ok && result.resCc.every(r => r.already) && cc.querySelectorAll('._Entity').length === 3, 'Retry duplicated or removed Cc recipients');
+        to.innerHTML = '<span contenteditable="false">Divya Gulati</span><span contenteditable="false">Pankaj Pawar</span><span contenteditable="false">SOORAJ</span>';
+        document.getElementById('cc-row').hidden = false;
+        cc.innerHTML = ['Ashok Kumar','Estate If3','Kirshan Chander','Anurag Yadav','Anurag Sharma'].map(name=>'<span contenteditable="false">'+name+'</span>').join('');
+        const nativeTo = to.innerHTML, nativeCc = cc.innerHTML;
+        result = await run('recipients', {to:['different@example.invalid'],cc:['tech.if3@sgvgroup.in']});
+        check(!result.ok && to.innerHTML === nativeTo && cc.innerHTML === nativeCc, 'A recipient-entry command modified native display-name chips');
 
         result = await run('attach', {files});
         check(result.ok && result.results.length === 2 && result.results.every(r => r.ok), 'Batch upload did not report both attached files');
@@ -156,6 +144,7 @@ if (!browser) {
         check(strip.children.length === 1 && strip.firstElementChild.dataset.filename === nextDump.name, 'A similarly named old dump was mistaken for the new file');
 
         strip.replaceChildren();
+        for (const el of [document.querySelector('[aria-label="Subject"]'),document.getElementById('editor')]) el.setAttribute('data-mygate-handoff-draft','partial-upload-batch');
         blockedName = files[1].name;
         result = await run('attach', {files});
         check(!result.ok && result.results.length === 2, 'Partial upload did not return one result per requested file');
@@ -171,6 +160,7 @@ if (!browser) {
         check(editor.querySelectorAll('img[alt="Existing signature logo"]').length === 1, 'The native signature logo was removed or duplicated');
         check((editor.textContent.match(/Earlier report history/g) || []).length === 1, 'The quoted report history was removed or duplicated');
         check(document.getElementById('previous-message').textContent === 'Previous sent report and its attachments', 'The original sent message outside the editor changed');
+        check(to.innerHTML === nativeTo && cc.innerHTML === nativeCc && document.getElementById('bcc').value === '', 'Draft preparation changed native To/Cc/Bcc recipients');
         const emptyEditor = editor.cloneNode(false);
         emptyEditor.innerHTML = '<div><br></div>';
         editor.replaceWith(emptyEditor);
@@ -187,6 +177,6 @@ if (!browser) {
     assert.equal(result.status, 0, result.stderr)
     const outcome = result.stdout.match(/data-test-result="([^"]*)"/)?.[1]
     assert.equal(outcome, 'PASS', outcome || 'Outlook DOM check did not finish')
-    console.log('PASS: real Outlook script verifies multiple To/Cc recipients, Cc expansion, Bcc isolation, attachments, retries, and signatures')
+    console.log('PASS: real Outlook script preserves native To/Cc/Bcc, attachments, retries, signatures, logo, and quoted history')
   } finally { fs.rmSync(temporary, { recursive: true, force: true }) }
 }

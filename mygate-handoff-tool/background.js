@@ -34,40 +34,20 @@ async function aioLog(msg, kind = 'info') {
   await aioSetState({ log: [...state.log, { msg, kind }].slice(-160) })
 }
 function checkAbort() { if (aborted) throw new Error('__ABORT__') }
-function removeSpeedSettings(cfg) {
+function removeObsoleteSettings(cfg) {
   delete cfg.requestDelayMs
   delete cfg.settingsVersion
-  return cfg
-}
-function migrateRecipientSettings(cfg) {
-  // Upgrade the original saved defaults when an existing installation updates.
-  const legacyAddresses = {
-    'pawar-pankat@dlf.in': 'pawar-pankaj@dlf.in',
-    'ashok kumar': 'tech.if3@sgvgroup.in',
-    'estate if3': 'estate.if3@sgvgroup.in',
-    'kirshan chander': 'apm2.if3@sgvgroup.in',
-    'anurag yadav': 'anurag.yadav@sgvgroup.in',
-    'anurag sharma': 'anurag.sharma@sgvgroup.in',
-  }
-  const key = value => String(value).trim().toLowerCase()
-  if (Array.isArray(cfg.to) && cfg.to.length === 2 &&
-      cfg.to.some(value => key(value) === 'gulati-divya@dlf.in') &&
-      cfg.to.some(value => key(value) === 'pawar-pankat@dlf.in')) {
-    cfg.to = [...self.EmailTemplate.DEFAULTS.to]
-  }
-  for (const field of ['to', 'cc']) {
-    if (Array.isArray(cfg[field])) cfg[field] = cfg[field].map(value => legacyAddresses[key(value)] || value)
-  }
+  delete cfg.to
+  delete cfg.cc
   return cfg
 }
 async function getCfg() {
   const { handoffCfg } = await chrome.storage.local.get('handoffCfg')
-  return migrateRecipientSettings(removeSpeedSettings({ fromDate: '2024-01-01', toDate: todayStr(), slots: DEFAULT_SLOTS,
-    subject: self.EmailTemplate.DEFAULTS.subject, to: self.EmailTemplate.DEFAULTS.to,
-    cc: self.EmailTemplate.DEFAULTS.cc, includeTable: true, ...handoffCfg }))
+  return removeObsoleteSettings({ fromDate: '2024-01-01', toDate: todayStr(), slots: DEFAULT_SLOTS,
+    subject: self.EmailTemplate.DEFAULTS.subject, includeTable: true, ...handoffCfg })
 }
 function validateCfg(cfg) {
-  removeSpeedSettings(cfg)
+  removeObsoleteSettings(cfg)
   const validDate = s => /^\d{4}-\d{2}-\d{2}$/.test(s) && new Date(`${s}T00:00:00`).toString() !== 'Invalid Date'
   if (!validDate(cfg.fromDate) || !validDate(cfg.toDate) || cfg.fromDate > cfg.toDate) throw new Error('Please select valid From and Till dates, in order.')
   if (cfg.toDate > todayStr()) throw new Error('Report Till cannot be in the future.')
@@ -193,7 +173,6 @@ async function draft(cfg) {
   const { handoffBatch: batch } = await chrome.storage.local.get('handoffBatch')
   const batchSlots = batch?.slots || Object.keys(batch?.files || {})
   if (!state.generationReady || !batchSlots.length || batchSlots.some(s => !batch.files[s]?.base64)) throw new Error('Complete step 1 before drafting the email.')
-  if (!Array.isArray(cfg.to) || !cfg.to.length) throw new Error('Enter at least one To recipient.')
   await aioSetState({ phase: 'emailing', step: 2, pct: 5, error: null, email: null, stepText: 'Opening the Outlook reply…' })
   checkAbort()
   const tabId = await ensureOutlookTab()
@@ -207,10 +186,11 @@ async function draft(cfg) {
   await command('ping', {}, 15000)
   // Only this batch's own reply can be retried. Keep Outlook's native reply
   // subject and conversation headers so the daily reports remain in one thread.
-  const draftKey = JSON.stringify([batch.generatedAt, cfg.to, cfg.cc || [], cfg.subject])
+  const draftKey = JSON.stringify([batch.generatedAt, cfg.subject])
   const reply = await openReply(tabId, { draftKey, subject: cfg.subject })
-  await aioSetState({ pct: 25, stepText: 'Checking reply recipients…' })
-  await command('recipients', { to: cfg.to, cc: cfg.cc || [] }, 180000)
+  // Reply all already supplies To/Cc. Contact chips can expose only display
+  // names, so trying to match them to addresses can add the same people twice.
+  await aioSetState({ pct: 25, stepText: 'Preparing the report body…' })
   const et = self.EmailTemplate
   const c = batch.counts
   const tableHtml = cfg.includeTable !== false && c
@@ -224,7 +204,7 @@ async function draft(cfg) {
     await aioSetState({ pct: 60, stepText: 'Attaching generated files…' })
     const attached = await command('attach', { files: attachments }, 600000)
     if (attachments.some(f => !attached.results?.some(r => r.name === f.name && r.ok))) {
-      throw new Error('Some files need manual attachment. The generated workbooks are in Downloads.')
+      throw new Error('Some attachments could not be verified. Check the reply and attach any missing files from Downloads; uploads will not be repeated automatically.')
     }
   }
   await aioLog('Outlook reply draft prepared. Review it in Outlook and send when ready.', 'ok')
@@ -271,14 +251,14 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         break
       }
       case 'HANDOFF_SAVE_CFG':
-        await chrome.storage.local.set({ handoffCfg: removeSpeedSettings({ ...message.cfg }) })
+        await chrome.storage.local.set({ handoffCfg: removeObsoleteSettings({ ...message.cfg }) })
         respond({ ok: true })
         break
       case 'HANDOFF_GENERATE':
       case 'HANDOFF_DRAFT': {
         if (message.type === 'HANDOFF_DRAFT' && !self.HandoffRelease.emailEnabled) throw new Error('Email is disabled in this version. It will be available in a future update.')
         if (active) throw new Error('A step is already running.')
-        const cfg = { ...await getCfg(), ...message.cfg }
+        const cfg = removeObsoleteSettings({ ...await getCfg(), ...message.cfg })
         if (active) throw new Error('A step is already running.')
         const step = message.type === 'HANDOFF_GENERATE' ? 1 : 2
         if (step === 1) {

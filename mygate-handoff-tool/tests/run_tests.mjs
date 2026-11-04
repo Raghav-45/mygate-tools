@@ -149,23 +149,13 @@ assert.equal(defaults.context.HandoffRelease.emailEnabled, true)
 const initial = await defaults.request({ type: 'HANDOFF_GET_STATE' })
 assert.deepEqual(Array.from(initial.cfg.slots), ['report', 'dump', 'analysis'])
 assert.equal(initial.cfg.requestDelayMs, undefined)
-assert.deepEqual(Array.from(initial.cfg.to), ['gulati-divya@dlf.in', 'pawar-pankaj@dlf.in', 'sooraj@dlf.in'])
-assert.deepEqual(Array.from(initial.cfg.cc), ['tech.if3@sgvgroup.in', 'estate.if3@sgvgroup.in', 'apm2.if3@sgvgroup.in',
-  'anurag.yadav@sgvgroup.in', 'anurag.sharma@sgvgroup.in'])
-defaults.store.handoffCfg = {
-  to: ['gulati-divya@dlf.in', 'pawar-pankat@dlf.in'],
-  cc: ['Ashok Kumar', 'Estate If3', 'Kirshan Chander', 'Anurag Yadav', 'Anurag Sharma'],
-}
-const upgradedRecipients = (await defaults.request({ type: 'HANDOFF_GET_STATE' })).cfg
-assert.deepEqual(Array.from(upgradedRecipients.to), Array.from(initial.cfg.to))
-assert.deepEqual(Array.from(upgradedRecipients.cc), Array.from(initial.cfg.cc))
-defaults.store.handoffCfg = { to: ['custom@example.invalid'], cc: ['Ashok Kumar', 'other@example.invalid'] }
-const customRecipients = (await defaults.request({ type: 'HANDOFF_GET_STATE' })).cfg
-assert.deepEqual(customRecipients.to, ['custom@example.invalid'])
-assert.deepEqual(customRecipients.cc, ['tech.if3@sgvgroup.in', 'other@example.invalid'])
-defaults.store.handoffCfg.cc = []
-assert.deepEqual((await defaults.request({ type: 'HANDOFF_GET_STATE' })).cfg.cc, [])
-console.log('PASS: email defaults use addresses; existing default names and typo migrate while custom recipients stay intact')
+assert.equal(initial.cfg.to, undefined)
+assert.equal(initial.cfg.cc, undefined)
+defaults.store.handoffCfg = { to: ['legacy@example.invalid'], cc: ['Ashok Kumar'] }
+const legacyRecipients = (await defaults.request({ type: 'HANDOFF_GET_STATE' })).cfg
+assert.equal(legacyRecipients.to, undefined)
+assert.equal(legacyRecipients.cc, undefined)
+console.log('PASS: obsolete recipient settings are ignored; Outlook owns the reply recipients')
 defaults.store.handoffCfg = { requestDelayMs: 5000, settingsVersion: 2 }
 const migratedCfg = (await defaults.request({ type: 'HANDOFF_GET_STATE' })).cfg
 assert.equal(migratedCfg.requestDelayMs, undefined)
@@ -224,14 +214,19 @@ assert.equal(state.phase, 'done', state.error)
 assert.equal(h.network.length, networkCount)
 assert.equal(h.downloads.length, 4)
 assert.ok(h.outlook.find(c => c.op === 'body').payload.html.includes('Pending Mygate Tickets'))
-assert.equal(h.outlook.find(c => c.op === 'replyAll').payload.draftKey, JSON.stringify([batch.generatedAt, params.to, params.cc, params.subject]))
+assert.equal(h.outlook.find(c => c.op === 'replyAll').payload.draftKey, JSON.stringify([batch.generatedAt, params.subject]))
 assert.equal(h.outlook.find(c => c.op === 'replyAll').payload.subject, params.subject)
-assert.ok(!h.outlook.some(c => ['newMail', 'subject', 'send'].includes(c.op)), 'Reply drafting must retain the native thread and subject and never send')
+assert.ok(!h.outlook.some(c => ['newMail', 'recipients', 'subject', 'send'].includes(c.op)), 'Reply drafting must retain native recipients, thread and subject and never send')
 assert.equal(state.email.sourceUrl, 'https://outlook.cloud.microsoft/mail/sentitems/id/previous-report')
 assert.ok(h.outlook.find(c => c.op === 'body').payload.fallbackSignatureHtml.includes('Help desk'))
 assert.equal(h.outlook.find(c => c.op === 'attach').payload.files.length, 2)
 assert.equal(h.outlook.some(c => c.op === 'send'), false)
 console.log('PASS: Outlook failure preserves step 1; retry uses same batch without scans or downloads; draft is never sent')
+state = await h.run(2, { ...params, to: [], cc: [] })
+assert.equal(state.phase, 'done', state.error)
+assert.equal(h.outlook.filter(c => c.op === 'replyAll').at(-1).payload.draftKey, JSON.stringify([batch.generatedAt, params.subject]))
+assert.equal(h.outlook.some(c => c.op === 'recipients'), false)
+console.log('PASS: reply recipients are inherited untouched; empty or changed legacy recipient settings cannot change retry ownership')
 
 h.control.partialAttach = true
 state = await h.run(2)
@@ -374,11 +369,10 @@ if (chromePath) {
         check(!document.getElementById('draftBtn').disabled, 'Email stayed locked after generation');
         check(!document.getElementById('emailFields').disabled, 'Email form stayed disabled');
         check(document.getElementById('emailOverlay').classList.contains('hidden'), 'Email overlay is blocking the form');
-        document.getElementById('ccInput').value = 'copy.first@example.invalid; copy.second@example.invalid; copy.third@example.invalid';
-        document.getElementById('ccInput').dispatchEvent(new Event('input'));
+        check(!document.getElementById('toInput') && !document.getElementById('ccInput'), 'Reply still offers recipient fields that can duplicate native recipients');
         document.getElementById('draftBtn').click();
         check(sent.some(m=>m.type==='HANDOFF_DRAFT' && m.cfg.slots.join(',')==='report'), 'Email button did not request a draft');
-        check(sent.find(m=>m.type==='HANDOFF_DRAFT').cfg.cc.join(',')==='copy.first@example.invalid,copy.second@example.invalid,copy.third@example.invalid', 'Popup did not pass all three Cc recipients');
+        check(!('to' in sent.find(m=>m.type==='HANDOFF_DRAFT').cfg) && !('cc' in sent.find(m=>m.type==='HANDOFF_DRAFT').cfg), 'Popup still passes recipients for re-entry');
       }), 1250);
       setTimeout(() => { document.body.dataset.testResult = failure || 'PASS'; }, 1500);
     });
@@ -392,4 +386,5 @@ if (chromePath) {
   console.log('PASS: real Chrome popup locks loading controls, saves report-only selection, and enables email drafting after generation')
 } else console.log('SKIP: popup browser regression requires Chrome or Chromium; worker checks passed')
 await import('./outlook_dom_tests.mjs')
+await import('./outlook_attachment_tests.mjs')
 console.log('All handoff integration checks passed.')

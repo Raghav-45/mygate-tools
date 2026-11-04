@@ -144,9 +144,6 @@
 
   const DEFAULTS = {
     subject: 'Mygate Complaint Summary.',
-    to: ['gulati-divya@dlf.in', 'pawar-pankaj@dlf.in', 'sooraj@dlf.in'],
-    cc: ['tech.if3@sgvgroup.in', 'estate.if3@sgvgroup.in', 'apm2.if3@sgvgroup.in',
-      'anurag.yadav@sgvgroup.in', 'anurag.sharma@sgvgroup.in'],
   }
 
   global.EmailTemplate = {

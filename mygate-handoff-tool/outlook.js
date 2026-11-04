@@ -8,8 +8,6 @@
  *   ping        → verifies the script is alive
  *   replyAll    → replies to the open report in Sent Items; retries reuse
  *                 only the reply created for the same report batch.
- *   recipients  → fills To/Cc with verification that each value committed
- *   subject     → fills the subject
  *   body        → inserts the greeting/table/signature HTML (preserving the
  *                 Outlook signature that Outlook already inserted)
  *   attach      → attaches files via hidden file input, synthetic paste,
@@ -107,22 +105,6 @@
     return null
   }
 
-  function setNativeValue(input, value) {
-    if (input.isContentEditable) {
-      input.append(document.createTextNode(value))
-      input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }))
-      return
-    }
-    const proto =
-      input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
-    const desc = Object.getOwnPropertyDescriptor(proto, 'value')
-    const setter = desc && desc.set
-    if (setter) setter.call(input, value)
-    else input.value = value
-    input.dispatchEvent(new Event('input', { bubbles: true }))
-    input.dispatchEvent(new Event('change', { bubbles: true }))
-  }
-
   // ---------------------------------------------------------------------------
   // Live DOM diagnostics — surfaced in the run log on failures
   // ---------------------------------------------------------------------------
@@ -200,6 +182,8 @@
   }
 
   function bodyEditable() {
+    const precise = [...document.querySelectorAll('div[contenteditable="true"][aria-label="Message body"], div[contenteditable="true"][aria-label*="message" i][aria-label*="body" i]')].find(isVisible)
+    if (precise) return precise
     const cands = [
       // Precise, preferred: the composer labels its editor "Message body".
       ...document.querySelectorAll(
@@ -209,7 +193,7 @@
         'div[contenteditable="true"][role="textbox"], div[contenteditable="true"]',
       ),
     ]
-    const vis = cands.filter(isVisible)
+    const vis = cands.filter(isVisible).filter(el => !/^(to|cc|bcc)$/i.test(el.getAttribute('aria-label') || ''))
     let best = null
     let bestArea = 0
     for (const el of vis) {
@@ -226,6 +210,17 @@
   function composeRootEl() {
     const body = bodyEditable() || subjectInput()
     if (!body) return null
+    const subject = subjectInput()
+    if (subject && subject !== body) {
+      // Outlook can nest the body more than six levels below its header and
+      // attachment strip. The nearest shared ancestor is the reply boundary.
+      let root = body.parentElement
+      while (root && root !== document.body) {
+        if (root.contains(subject)) return root
+        root = root.parentElement
+      }
+      return null
+    }
     let root = body
     for (let i = 0; i < 6; i++) {
       const p = root.parentElement
@@ -293,183 +288,8 @@
     return null
   }
 
-  function ensureCcRow() {
-    if (recipientInput('cc')) return true
-    // Cc expander: aria/title token match first.
-    let btn = findByLabel(['\\bcc\\b', 'show cc', 'cc & bcc'])
-    if (!btn) {
-      btn = [...clickableElements()].find(
-        (el) => isVisible(el) && /(^|\s)cc(\s|$|&)/i.test(labelOf(el)) && !/bcc/i.test(labelOf(el)),
-      )
-    }
-    if (!btn) {
-      // Some builds render a "Cc" text caption inside a button-like row.
-      btn = findByVisibleText(['^Cc$', 'Cc'])
-    }
-    if (btn) {
-      btn.click()
-      return !!until(() => recipientInput('cc'), { tries: 12, delay: 200 })
-    }
-    return false
-  }
-
-  function fireKey(el, key, code) {
-    const opts = { bubbles: true, cancelable: true, key, keyCode: code, which: code }
-    el.dispatchEvent(new KeyboardEvent('keydown', opts))
-    el.dispatchEvent(new KeyboardEvent('keyup', opts))
-  }
-
-  function recipientChipSeen(value, field) {
-    const needle = String(value || '').trim().toLowerCase()
-    if (!needle) return false
-    const input = recipientInput(field)
-    const root = input?.isContentEditable ? input : input?.closest('[role="group"]') || input?.parentElement
-    if (!root) return false
-    return [...root.querySelectorAll('._Entity, [contenteditable="false"], [role="listitem"], [data-email-address]')].some(chip => {
-      const text = [chip.textContent, chip.getAttribute('title'), chip.getAttribute('aria-label'), chip.getAttribute('data-email-address')].join(' ').toLowerCase()
-      return text.includes(needle)
-    })
-  }
-
-  function fieldHasText(el) {
-    if (!el) return false
-    let t = el.value
-    if (t == null) {
-      const copy = el.cloneNode(true)
-      copy.querySelectorAll('._Entity, [contenteditable="false"], [role="listitem"]').forEach(chip => chip.remove())
-      t = copy.textContent || ''
-    }
-    return !!String(t).replace(/[\s\u200b-\u200d\ufeff]/g, '')
-  }
-
-  function clearField(el) {
-    try {
-      el.focus()
-      if (el.isContentEditable) {
-        // Current Outlook stores committed recipients inside the editor. Clear
-        // only free text and place the caret after the retained recipient chips.
-        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
-        const freeText = []
-        while (walker.nextNode()) {
-          if (!walker.currentNode.parentElement.closest('._Entity, [contenteditable="false"]')) freeText.push(walker.currentNode)
-        }
-        freeText.forEach(node => { node.textContent = '' })
-        const range = document.createRange()
-        range.selectNodeContents(el)
-        range.collapse(false)
-        const selection = window.getSelection()
-        selection.removeAllRanges()
-        selection.addRange(range)
-        el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }))
-        return
-      }
-      if (el.setSelectionRange && el.value != null) el.setSelectionRange(0, (el.value || '').length)
-      document.execCommand('selectAll', false, null)
-      document.execCommand('delete')
-    } catch (e) {}
-  }
-
-  function syntheticClick(el) {
-    const base = { bubbles: true, cancelable: true, view: window, composed: true }
-    try { el.dispatchEvent(new PointerEvent('pointerdown', { ...base, pointerType: 'mouse', isPrimary: true })) } catch (e) {}
-    try { el.dispatchEvent(new MouseEvent('mousedown', base)) } catch (e) {}
-    try { el.dispatchEvent(new PointerEvent('pointerup', { ...base, pointerType: 'mouse', isPrimary: true })) } catch (e) {}
-    try { el.dispatchEvent(new MouseEvent('mouseup', base)) } catch (e) {}
-    try { el.dispatchEvent(new MouseEvent('click', base)) } catch (e) {}
-    try { el.click() } catch (e) {}
-  }
-
-  // Fluent pickers render the picker row for any typed-but-unknown address as
-  // "Use this address: <value>". Clicking it is the only reliable commit on
-  // this build (synthetic Enter/';' are ignored). Pick the smallest matching
-  // row so huge ancestor containers never win.
-  function suggestionItem(value) {
-    const needle = String(value || '').trim().toLowerCase()
-    const matchRx = (t) => /use this address/i.test(t) || (!!needle && t.includes(needle))
-    const pick = (list) => {
-      const rows = list
-        .filter(isVisible)
-        .filter((el) => matchRx(((el.textContent || '') + ' ' + (labelOf(el) || '')).toLowerCase()))
-        .sort((a, b) => (a.textContent || '').length - (b.textContent || '').length)
-      return rows[0] || null
-    }
-    const scope = composeRootEl() || document
-    let hit = pick([...scope.querySelectorAll('[role="option"], [role="menuitem"], [data-automation-id*="suggestion" i], [class*="suggestion" i], li')])
-    if (!hit) hit = pick([...document.querySelectorAll('[role="option"], [role="menuitem"], [class*="suggestion" i]')])
-    return hit
-  }
-
-  async function typeRecipients(field, values) {
-    const results = []
-    for (const value of values) {
-      const v = String(value || '').trim()
-      if (!v) continue
-      let el = recipientInput(field)
-      if (!el && field === 'to') el = await until(() => recipientInput('to'), { tries: 20, delay: 250 })
-      if (!el && field === 'cc') {
-        ensureCcRow()
-        el = await until(() => recipientInput('cc'), { tries: 12, delay: 200 })
-      }
-      if (!el) {
-        results.push({ value: v, ok: false })
-        continue
-      }
-
-      // Only a committed chip in this recipient field counts as already filled.
-      if (recipientChipSeen(v, field)) {
-        results.push({ value: v, ok: true, already: true })
-        continue
-      }
-
-      // The compose is often reused and still holds leftover text from an
-      // earlier attempt — clear it completely before typing.
-      el.focus()
-      await sleep(120)
-      clearField(el)
-      await sleep(180)
-
-      // Type the address (real typing first; native fallback for blocked editors).
-      try {
-        document.execCommand('insertText', false, v)
-      } catch (e) {}
-      await sleep(180)
-      if (!fieldHasText(el)) {
-        setNativeValue(el, v)
-      }
-      await sleep(450) // let the suggestion pane appear
-
-      // Commit strategies until the picker empties the field (chip accepted).
-      let committed = false
-      for (const strategy of ['suggest', 'enter', 'semicolon', 'suggest2', 'blur', 'enter2']) {
-        if (strategy === 'enter' || strategy === 'enter2') fireKey(el, 'Enter', 13)
-        else if (strategy === 'semicolon') fireKey(el, ';', 186)
-        else if (strategy === 'blur') {
-          try {
-            el.blur()
-          } catch (e) {}
-        } else {
-          // "suggest" / "suggest2": click the "Use this address …" row.
-          const item = suggestionItem(v)
-          if (item) syntheticClick(item)
-        }
-        await sleep(450)
-        // React swaps the input node when a chip lands — re-grab it so the
-        // emptiness check reads the LIVE field.
-        el = recipientInput(field) || el
-        committed = recipientChipSeen(v, field) && !fieldHasText(el)
-        if (committed) break
-        try {
-          el.focus()
-        } catch (e) {}
-        await sleep(100)
-      }
-      results.push({ value: v, ok: committed })
-    }
-    return results
-  }
-
   // ---------------------------------------------------------------------------
-  // Attachment engine (files via hidden input / DataTransfer paste / drop)
+  // Attachment engine (one upload submission per file and reply)
   // ---------------------------------------------------------------------------
 
   function base64ToUint8(base64) {
@@ -486,333 +306,161 @@
   }
 
   function fileNameKey(name) {
-    return String(name).toLowerCase()
-      .replace(/\s*\(\d+\)(?=\.(?:xlsx?|csv)\b)/g, '')
-      .replace(/[^a-z0-9]/g, '')
+    return String(name).toLowerCase().replace(/\s*\(\d+\)(?=\.(?:xlsx?|csv)\b)/g, '').replace(/[^a-z0-9]/g, '')
   }
 
-  // Elements of the real attachment strip inside the compose. Never reads the
-  // whole compose text — the subject/body can contain similar words and used
-  // to fake attachments.
-  function attachAreaEls() {
-    const root = composeRootEl()
-    if (!root) return []
-    return [
-      ...root.querySelectorAll(
-        '[data-automation-id*="attachment" i], [data-testid*="attachment" i], [class*="attachment" i], [title*=".xls" i], [aria-label*=".xls" i], [title*=".csv" i], [aria-label*=".csv" i]',
-      ),
-    ].filter(isVisible)
+  function attachmentNames(el) {
+    const values = [el.getAttribute('data-filename'), el.getAttribute('title'), el.getAttribute('aria-label')]
+    for (const child of el.querySelectorAll('[data-filename], [title], [aria-label]')) {
+      values.push(child.getAttribute('data-filename'), child.getAttribute('title'), child.getAttribute('aria-label'))
+    }
+    return values.filter(Boolean).map(value => value.match(/[^\r\n<>]*?\.(?:xlsx?|csv)\b/i)?.[0].trim())
+      .filter(value => value && !/[\u2026]|\.{3}/.test(value))
   }
 
-  // ONE entry per REAL chip on the attachment strip. Chip containers carry
-  // the filename with its extension in title/aria-label; leaf text elements
-  // qualify when chip-sized. Big containers (whole panes, class*=attachment
-  // wrappers) are rejected — their text would fake-match every filename.
+  // Attachment cards belong to the reply, never to its editable body or the
+  // original messages beneath it. Prefer Outlook's actual role=option cards.
   function chipList() {
     const root = composeRootEl()
     if (!root) return []
-    const cand = attachAreaEls()
-    const accepted = []
-    // Outermost first: accept the chip CARD before its inner text leaf, so
-    // nested matches collapse into one entry.
-    cand.sort((a, b) => b.getBoundingClientRect().width * b.getBoundingClientRect().height - a.getBoundingClientRect().width * a.getBoundingClientRect().height)
-    for (const el of cand) {
-      if (accepted.some((c) => c.el.contains(el))) continue
-      const attrs = `${el.getAttribute('title') || ''} ${el.getAttribute('aria-label') || ''}`.toLowerCase()
-      const isCard = /\.(xls|csv)/.test(attrs)
-      const compact = fileNameKey(`${attrs} ${el.textContent || ''}`)
-      if (!compact) continue
-      if (!isCard) {
-        // Non-card matches must be leaf + chip-sized to count
-        if (el.querySelector('[data-automation-id*="attachment" i], [data-testid*="attachment" i], [class*="attachment" i], [title*=".xls" i]')) continue
-        if (compact.length > 160) continue
-      }
-      accepted.push({ el, compact })
+    const eligible = el => isVisible(el) && !el.closest('[contenteditable="true"], [role="document"]') && attachmentNames(el).length
+    let elements = [...root.querySelectorAll('[role="option"]')].filter(eligible)
+    if (!elements.length) {
+      elements = [...root.querySelectorAll('[data-filename], .attachment, [title*=".xls" i], [aria-label*=".xls" i]')].filter(eligible)
+      elements = elements.map(el => el.closest('[data-filename], .attachment') || el)
     }
-    return accepted
+    return [...new Set(elements)].filter(el => !elements.some(other => other !== el && other.contains(el)))
+      .map(el => {
+        const names = attachmentNames(el).map(fileNameKey)
+        return { el, names, key: names[0] }
+      })
   }
 
-  // Real chip check: the file's compact name must appear on an attachment
-  // LIST element — not in a toast, a pane, the subject or the body.
-  function chipVerified(f) {
-    const nameCompact = fileNameKey(f.name)
-    if (!nameCompact) return false
-    for (const c of chipList()) {
-      if (c.compact.includes(nameCompact)) return true
+  function matchesFile(chip, file) {
+    const key = fileNameKey(file.name)
+    return !!key && chip.names.some(name => name.includes(key))
+  }
+
+  function fileChips(file) { return chipList().filter(chip => matchesFile(chip, file)) }
+  function hasUnknownAttachmentCards() {
+    const root = composeRootEl()
+    return !!root && [...root.querySelectorAll('[role="listbox"][aria-label*="attachment" i] [role="option"]')]
+      .some(el => isVisible(el) && !attachmentNames(el).length)
+  }
+  function chipVerified(file) {
+    const chips = fileChips(file)
+    return chips.length === 1 && !chips[0].el.querySelector('[role="progressbar"]') &&
+      !/\b(uploading|failed|error|retry)\b/i.test(chips[0].el.textContent + ' ' + (chips[0].el.getAttribute('aria-label') || ''))
+  }
+
+  async function removeChip(chip) {
+    const controls = [...chip.el.querySelectorAll('button, [role="button"]')].filter(isVisible)
+    let remove = controls.find(el => /\b(remove|delete|close)\b/i.test(labelOf(el) + ' ' + el.textContent))
+    if (!remove) {
+      const more = controls.find(el => el.getAttribute('aria-haspopup') || /more actions|attachment options/i.test(labelOf(el)))
+      if (!more) return false
+      more.click()
+      remove = await until(() => [...document.querySelectorAll('[role="menuitem"]')].find(el =>
+        isVisible(el) && /^(remove|delete)( attachment)?$/i.test((labelOf(el) || el.textContent).trim())), { tries: 20, delay: 100 })
+    }
+    if (!remove) return false
+    // One click only: syntheticClick dispatches click and then calls click(),
+    // which can open and immediately close Outlook's attachment action menu.
+    remove.click()
+    return !!await until(() => !chip.el.isConnected || !isVisible(chip.el), { tries: 30, delay: 100 })
+  }
+
+  async function cleanAttachmentCards(files) {
+    const keep = new Set()
+    for (const chip of chipList()) {
+      const file = files.find(file => matchesFile(chip, file))
+      const key = file && fileNameKey(file.name)
+      if (!file || keep.has(key)) {
+        if (!await removeChip(chip)) return false
+      } else keep.add(key)
+    }
+    return true
+  }
+
+  function uploadAnchors() { return [subjectInput(), bodyEditable()].filter(Boolean) }
+  function attemptedFiles() {
+    const anchors = uploadAnchors()
+    const draftKey = anchors.map(el => el.getAttribute('data-mygate-handoff-draft')).find(Boolean) || ''
+    const names = new Set()
+    for (const anchor of anchors) {
+      try {
+        const saved = JSON.parse(anchor.getAttribute('data-mygate-handoff-upload-attempts') || '{}')
+        if (saved.draftKey === draftKey) for (const name of saved.names || []) names.add(name)
+      } catch (error) {}
+    }
+    return { anchors, draftKey, names }
+  }
+
+  function recordUploadAttempts(state, files) {
+    for (const file of files) state.names.add(fileNameKey(file.name))
+    const value = JSON.stringify({ draftKey: state.draftKey, names: [...state.names] })
+    for (const anchor of state.anchors) anchor.setAttribute('data-mygate-handoff-upload-attempts', value)
+  }
+
+  function usableFileInputs(count) {
+    const root = composeRootEl()
+    return [...document.querySelectorAll('input[type="file"]')]
+      .filter(el => !el.disabled && (count === 1 || el.multiple) &&
+        (!el.accept || /spreadsheet|excel|octet-stream|\.(xlsx?|csv)/i.test(el.accept)))
+      .sort((a, b) => Number(!!root?.contains(b)) - Number(!!root?.contains(a)))
+  }
+
+  async function submitFilesOnce(files, attempts) {
+    let inputs = usableFileInputs(files.length)
+    if (!inputs.length) {
+      const opener = findByLabel(['attach'], { dataIdRx: 'attach' }) || findByVisibleText(['^Attach file$'])
+      if (opener) {
+        opener.click()
+        await until(() => usableFileInputs(files.length).length, { tries: 20, delay: 100 })
+        inputs = usableFileInputs(files.length)
+      }
+    }
+    // Assignment alone does not upload. Try another input only if assignment
+    // throws before dispatch; once change is dispatched, never submit again.
+    for (const input of inputs) {
+      try {
+        const transfer = new DataTransfer()
+        for (const file of files) transfer.items.add(makeFile(file))
+        input.files = transfer.files
+      } catch (error) { continue }
+      recordUploadAttempts(attempts, files)
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+      return true
     }
     return false
   }
 
-  function attachmentCount() {
-    return chipList().length
-  }
-
-  function dispatchPaste(file, target) {
-    const dt = new DataTransfer()
-    dt.items.add(file)
-    target.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt }))
-  }
-
-  function dispatchDrop(file, target) {
-    const dt = new DataTransfer()
-    dt.items.add(file)
-    dt.effectAllowed = 'copy'
-    const rect = target.getBoundingClientRect()
-    const cx = rect.left + rect.width / 2
-    const cy = rect.top + rect.height / 2
-    target.dispatchEvent(new DragEvent('dragenter', { bubbles: true, cancelable: true, view: window, dataTransfer: dt, clientX: cx, clientY: cy }))
-    target.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, view: window, dataTransfer: dt, clientX: cx, clientY: cy }))
-    setTimeout(() => {
-      target.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, view: window, dataTransfer: dt, clientX: cx, clientY: cy }))
-    }, 80)
-  }
-
-  function pasteTargets() {
-    const out = []
-    const body = bodyEditable()
-    const root = composeRootEl()
-    if (body) out.push(body)
-    if (root && out[0] !== root) out.push(root)
-    const hook = document.querySelector('[data-test-id*="attach" i], [data-testid*="attach" i], [data-automation-id*="attach" i]')
-    if (hook && isVisible(hook) && !out.includes(hook)) out.push(hook)
-    return out
-  }
-
-  // Strategy 0 — drive the compose's hidden <input type=file> directly.
-  // This bypasses click automation entirely and is the most reliable path
-  // whenever the build exposes one.
-  function composeFileInputs() {
-    const root = composeRootEl()
-    const all = [...document.querySelectorAll('input[type="file"]')]
-    const inCompose = root ? all.filter((el) => root.contains(el)) : []
-    const rest = all.filter((el) => !inCompose.includes(el))
-    return [...inCompose, ...rest].filter((el) => !el.disabled)
-  }
-
-  async function attachViaFileInput(f, countBefore) {
-    // countBefore = chip count when THIS file's turn started. If a late chip
-    // from a previous file lands while we wait, the baseline is re-read so a
-    // neighbour's chip never counts as OUR success.
-    let base = countBefore
-    const file = makeFile(f)
-    // Never cycle a long input list: each dispatch is a real attach request.
-    // One event per input, stop the moment anything lands.
-    const inputs = composeFileInputs().slice(0, 3)
-    for (const inp of inputs) {
-      try {
-        if (attachmentCount() > base) {
-          if (chipVerified(f)) return true
-          base = attachmentCount()
-        }
-        const dt = new DataTransfer()
-        dt.items.add(file)
-        inp.files = dt.files
-        inp.dispatchEvent(new Event('change', { bubbles: true }))
-        const grew = await until(() => chipVerified(f) || attachmentCount() > base, { tries: 5, delay: 320 })
-        if (grew) {
-          if (chipVerified(f)) return true
-          await sleep(500) // settle — late chips from neighbours may land here
-          if (chipVerified(f)) return true
-          base = attachmentCount()
-        }
-      } catch (e) {}
-    }
-    return chipVerified(f)
-  }
-
-  // Opening the ribbon "Attach file" menu mounts the real <input type=file>
-  // that "Browse this computer" drives. Assigning files to it directly skips
-  // the native picker completely; Escape closes the menu afterwards.
-  async function attachViaAttachMenu(f, countBefore) {
-    const opener = findByLabel(['attach'], { dataIdRx: 'attach' }) || findByVisibleText(['^Attach file$', 'Attach'])
-    if (!opener) return false
-    let base = countBefore
+  let attaching = false
+  async function attachFiles(files) {
+    if (attaching) return { ok: false, error: 'Attachments are already being prepared. Wait for the current step to finish.' }
+    attaching = true
     try {
-      opener.click()
-      await sleep(350)
-      const file = makeFile(f)
-      const inputs = [...document.querySelectorAll('input[type="file"]')].filter((el) => !el.disabled).slice(0, 2)
-      for (const inp of inputs) {
-        try {
-          const dt = new DataTransfer()
-          dt.items.add(file)
-          inp.files = dt.files
-          inp.dispatchEvent(new Event('change', { bubbles: true }))
-          if (await until(() => chipVerified(f) || attachmentCount() > base, { tries: 5, delay: 320 })) {
-            await sleep(300)
-            fireKey(document.body || document, 'Escape', 27)
-            await sleep(150)
-            fireKey(document.body || document, 'Escape', 27)
-            return chipVerified(f)
-          }
-          base = attachmentCount()
-        } catch (e) {}
+      if (!composeRootEl() || !uploadAnchors().length) return { ok: false, error: 'The reply editor is unavailable.' }
+      if (!await cleanAttachmentCards(files)) {
+        return { ok: false, error: 'Remove duplicate or outdated attachments from this reply in Outlook, then retry. No new upload was started.' }
       }
-      fireKey(document.body || document, 'Escape', 27)
-      await sleep(150)
-      fireKey(document.body || document, 'Escape', 27)
-      return chipVerified(f)
-    } catch (e) {
-      fireKey(document.body || document, 'Escape', 27)
-      return false
-    }
-  }
-
-  // Primary strategy: hand ALL still-missing files to ONE hidden input in ONE
-  // change event. One event → one batch upload → no duplicate chips from
-  // repeated dispatches racing async handlers.
-  async function attachBatch(files, countBefore) {
-    const base = attachmentCount()
-    const inputs = composeFileInputs().slice(0, 2)
-    for (const inp of inputs) {
-      try {
-        const dt = new DataTransfer()
-        for (const f of files) dt.items.add(makeFile(f))
-        inp.files = dt.files
-        inp.dispatchEvent(new Event('change', { bubbles: true }))
-        if (await until(() => files.every((f) => chipVerified(f)) && attachmentCount() > countBefore, { tries: 10, delay: 300 })) {
-          await sleep(450) // settle — let Outlook finish its upload handling
-          return true
-        }
-        // Anything landed at all? Then another dispatch could duplicate it —
-        // stop cycling inputs and let per-file work cover the leftovers.
-        if (attachmentCount() > base) break
-      } catch (e) {}
-    }
-    return files.every((f) => chipVerified(f))
-  }
-
-  // Remove accidental duplicate chips (e.g. two copies of the same workbook
-  // after a retried dispatch). Keeps the FIRST chip of every filename group
-  // and clicks the remove control on the rest — trusting a click only when
-  // the chip count actually drops. Exposed so runs self-heal the pile.
-  async function dedupeChips() {
-    const removed = []
-    for (let pass = 0; pass < 3; pass++) {
-      const groups = new Map()
-      for (const c of chipList()) {
-        if (!groups.has(c.compact)) groups.set(c.compact, [])
-        groups.get(c.compact).push(c)
-      }
-      const dupGroups = [...groups.values()].filter((g) => g.length > 1)
-      if (!dupGroups.length) break
-      let anyRemoved = false
-      for (const g of dupGroups) {
-        for (const extra of g.slice(1)) {
-          const countBefore = chipList().length
-          const rm = findRemoveControl(extra.el)
-          if (!rm) continue
-          syntheticClick(rm)
-          await sleep(400)
-          if (chipList().length < countBefore) {
-            removed.push(g[0].compact.slice(0, 140))
-            anyRemoved = true
-          } else {
-            // The click may have opened a menu instead of removing — abort
-            // further clicks on this group and close whatever opened.
-            fireKey(document.body || document, 'Escape', 27)
-            await sleep(150)
-          }
-        }
-      }
-      if (!anyRemoved) break
-      await sleep(400)
-    }
-    return removed
-  }
-
-  function findRemoveControl(chipEl) {
-    const sels = [
-      '[aria-label*="delete" i]',
-      '[aria-label*="remove" i]',
-      '[aria-label*="close" i]',
-      '[title*="delete" i]',
-      '[title*="remove" i]',
-      '[title*="close" i]',
-      '[data-automation-id*="delete" i]',
-      '[data-automation-id*="remove" i]',
-    ]
-    for (const s of sels) {
-      const b = chipEl.querySelector(s)
-      if (b && isVisible(b)) return b
-    }
-    return null
-  }
-
-  // The email carries ONLY the configured files: any chip on the strip that
-  // doesn't belong (older config, junk added manually) is clicked away. Trust
-  // a removal only when the chip count actually drops afterwards.
-  function chipMatchesAnyFile(c, files) {
-    for (const f of files) {
-      const compact = fileNameKey(f.name)
-      if (compact && c.compact.includes(compact)) return true
-    }
-    return false
-  }
-
-  async function pruneForeignChips(keepFiles) {
-    const removed = []
-    if (!keepFiles.length) return removed
-    for (let pass = 0; pass < 4; pass++) {
-      const foreign = chipList().filter((c) => !chipMatchesAnyFile(c, keepFiles))
-      if (!foreign.length) break
-      let anyRemoved = false
-      for (const c of foreign) {
-        const countBefore = chipList().length
-        const rm = findRemoveControl(c.el)
-        if (!rm) continue
-        syntheticClick(rm)
-        await sleep(400)
-        if (chipList().length < countBefore) {
-          removed.push(c.compact.slice(0, 12))
-          anyRemoved = true
-        } else {
-          fireKey(document.body || document, 'Escape', 27)
-          await sleep(150)
-        }
-      }
-      if (!anyRemoved) break
-      await sleep(300)
-    }
-    return removed
-  }
-
-  async function syncAttachOne(f) {
-    const file = makeFile(f)
-    const isImage = /^image\//i.test(file.type || '')
-    const already = chipVerified(f)
-    if (already) return { name: f.name, ok: true, already: true }
-    const before = attachmentCount()
-
-    // Strategy 0 — hidden file input
-    if (await attachViaFileInput(f, before)) return { name: f.name, ok: true }
-
-    // Strategy 0.5 — open the Attach menu, drive its file input directly
-    if (await attachViaAttachMenu(f, before)) return { name: f.name, ok: true }
-
-    // Strategy 1 — drop on the compose surface (OWA accepts file drops as
-    // attachments). Prefer the compose root / attach hook over the body text.
-    const targets = pasteTargets()
-    const dropList = [targets[1], targets[2], targets[0]].filter(Boolean)
-    for (const t of dropList) {
-      dispatchDrop(file, t)
-      if (await until(() => chipVerified(f) || attachmentCount() > before, { tries: 4, delay: 300 })) {
-        return { name: f.name, ok: true }
-      }
-    }
-
-    // Strategy 2 — paste (only works for images on this build; OWA rejects
-    // xlsx paste with the "unsupported image file type" toast, so skip it).
-    if (isImage) {
-      for (const t of [...targets, document.body]) {
-        dispatchPaste(file, t)
-        if (await until(() => chipVerified(f) || attachmentCount() > before, { tries: 4, delay: 300 })) {
-          return { name: f.name, ok: true }
-        }
-      }
-    }
-
-    return { name: f.name, ok: false }
+      const already = new Set(files.filter(chipVerified).map(file => file.name))
+      const attempts = attemptedFiles()
+      const missing = files.filter(file => !fileChips(file).length && !attempts.names.has(fileNameKey(file.name)))
+      // Existing unverified cards may be uploads still appearing. Even if a
+      // page reload removed our attempt markers, never add another batch on
+      // top of an incomplete or unidentified attachment strip.
+      if (missing.length && !chipList().length && !hasUnknownAttachmentCards()) await submitFilesOnce(missing, attempts)
+      // Give a slow upload time to complete. If Outlook does not expose its
+      // filename, stop and let the user inspect it instead of trying more inputs,
+      // drag/drop or another upload on retry.
+      await until(() => files.every(chipVerified) && !hasUnknownAttachmentCards(), { tries: 120, delay: 250 })
+      const cleaned = await cleanAttachmentCards(files)
+      const results = files.map(file => ({ name: file.name, slot: file.slot, ok: chipVerified(file), already: already.has(file.name) }))
+      const ok = cleaned && results.every(result => result.ok) && chipList().length === files.length && !hasUnknownAttachmentCards()
+      return { ok, results, count: chipList().length,
+        error: ok ? undefined : 'Some attachments could not be verified. Check this reply and manually attach any missing files from Downloads. Existing upload attempts will not be repeated.' }
+    } finally { attaching = false }
   }
 
   // ---------------------------------------------------------------------------
@@ -861,35 +509,6 @@
       return { ok: true, reused: false, sourceUrl: source.href }
     },
 
-    async recipients(p) {
-      const resTo = await typeRecipients('to', p.to || [])
-      const resCc = (p.cc || []).length ? await typeRecipients('cc', p.cc) : []
-      const missing = [...resTo, ...resCc].filter((r) => !r.ok).map((r) => r.value)
-      let dump = null
-      if (missing.length) dump = diagnostics()
-      return {
-        ok: resTo.every((r) => r.ok) && resCc.every((r) => r.ok),
-        resTo,
-        resCc,
-        missing,
-        dump,
-      }
-    },
-
-    async subject(p) {
-      const el = await until(subjectInput, { tries: 20 })
-      if (!el) return { ok: false, error: 'Subject field not found', dump: diagnostics() }
-      el.focus()
-      await sleep(100)
-      if (el.tagName === 'DIV' || el.isContentEditable) {
-        document.execCommand('selectAll', false)
-        document.execCommand('insertText', false, String(p.subject || ''))
-      } else {
-        setNativeValue(el, String(p.subject || ''))
-      }
-      return { ok: true }
-    },
-
     async body(p) {
       const el = await until(bodyEditable, { tries: 20 })
       if (!el) return { ok: false, error: 'Message body not found', dump: diagnostics() }
@@ -922,39 +541,7 @@
     },
 
     async attach(p) {
-      const files = p.files || []
-
-      // 0) The strip may carry chips that this config no longer wants (older
-      //    runs, manually added files) — remove them first so the final state
-      //    is EXACTLY p.files.
-      let removed = await pruneForeignChips(files)
-
-      // 1) Self-heal: strip accidental duplicate chips from earlier attempts
-      removed = removed.concat(await dedupeChips())
-
-      // 2) Skip what's already there (a reused draft keeps old chips)
-      const already = new Set(files.filter((f) => chipVerified(f)).map(f => f.name))
-      const missing = files.filter((f) => !chipVerified(f))
-
-      // 3) Batch all missing files through one change event, then catch the
-      //    leftovers one by one with strict single-dispatch strategies
-      if (missing.length >= 2) await attachBatch(missing, attachmentCount())
-      for (const f of files.filter((x) => !chipVerified(x))) {
-        await syncAttachOne(f)
-        await sleep(250)
-      }
-
-      // 4) Final sweep — belt and braces: no duplicate chips may survive
-      const removedAfter = await dedupeChips()
-      removed = removed.concat(removedAfter)
-      const prunedAfter = await pruneForeignChips(files)
-      removed = removed.concat(prunedAfter)
-
-      // Batch uploads must be represented too. Only the final visible chips
-      // determine success, including files that arrived during fallback attempts.
-      const results = files.map(f => ({ name: f.name, slot: f.slot, ok: chipVerified(f), already: already.has(f.name) }))
-      const okAll = results.every((r) => r.ok) && chipList().every(c => chipMatchesAnyFile(c, files))
-      return { ok: okAll, results, deduped: removed.length, count: attachmentCount() }
+      return attachFiles(p.files || [])
     },
 
     async status() {

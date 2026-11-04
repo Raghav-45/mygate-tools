@@ -26,13 +26,17 @@ Five tools for the MyGate admin dashboard — all Chrome (Manifest V3) extension
    tab, open the extension and click **Prepare Reply Draft**. The tool checks the
    open report's subject and uses Outlook's **Reply all** so the daily report stays
    in the same conversation. It keeps the native reply subject, existing recipients,
-   signature and quoted history, checks/adds the configured To/Cc addresses,
+   signature and quoted history. To/Cc are inherited from Reply all and can be
+   edited directly in Outlook; the extension never enters recipients again. It
    inserts the new Pending Tickets table when available, and attaches the newly
    generated Master Dump and Analysis. Review the draft and send it manually.
    If the open email is wrong, another draft is open, or Reply all is unavailable,
    step 2 stops. Retries reuse only the reply belonging to the current batch,
-   without regenerating reports or duplicating the body and attachments. Step 1
-   downloads remain available if Outlook fails.
+   without regenerating reports or duplicating the body and attachments. Each
+   file is submitted once per reply. If an upload cannot be verified, retries
+   check the existing attachments rather than uploading it again; attach any
+   missing files manually from Downloads. Step 1 downloads remain available if
+   Outlook fails.
 
 Step 1 never opens Outlook. Report selections are locked until settings load and
 saved immediately when toggled. A run uses its explicit current selection, so a
@@ -69,11 +73,22 @@ still needs to reload each extension. Self-hosted CRX automatic updates on
 Windows/macOS require managed enterprise policies; Linux also supports self-hosted
 extension updates.
 
-To run the updater from an elevated Command Prompt after the script is available
-in the public repository:
+Open **PowerShell or Command Prompt as administrator**, then use the block for
+that terminal. Windows Terminal often opens PowerShell. Run the first line to
+download the updater; if it finishes without an error, run the second line.
+
+**PowerShell / Windows Terminal:**
+
+```powershell
+Invoke-WebRequest -UseBasicParsing -ErrorAction Stop -Uri 'https://raw.githubusercontent.com/Raghav-45/mygate-tools/main/scripts/Update-MyGateExtensions.ps1' -OutFile "$env:TEMP\Update-MyGateExtensions.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:TEMP\Update-MyGateExtensions.ps1"
+```
+
+**Command Prompt (CMD):**
 
 ```cmd
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$p=Join-Path $env:TEMP 'Update-MyGateExtensions.ps1'; Invoke-WebRequest 'https://raw.githubusercontent.com/Raghav-45/mygate-tools/main/scripts/Update-MyGateExtensions.ps1' -OutFile $p; & $p"
+powershell.exe -NoProfile -Command "Invoke-WebRequest -UseBasicParsing -ErrorAction Stop -Uri 'https://raw.githubusercontent.com/Raghav-45/mygate-tools/main/scripts/Update-MyGateExtensions.ps1' -OutFile (Join-Path $env:TEMP 'Update-MyGateExtensions.ps1')"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%TEMP%\Update-MyGateExtensions.ps1"
 ```
 
 It updates only matching MyGate extension folders already present directly in the
@@ -89,7 +104,7 @@ and attaches them to a GitHub Release. To trigger it:
 1. Go to the repo on GitHub → **Actions** tab.
 2. Select **Manual Release** on the left → **Run workflow**.
 3. Fill in:
-   - **Version / tag** — use `0.0.3` for this release (prefixed with `v` automatically).
+   - **Version / tag** — choose a new, unused version, such as `0.0.6` (prefixed with `v` automatically).
    - **Release notes** — what changed.
    - **Mark as pre-release** — toggle if needed.
 4. Click **Run workflow**.
