@@ -62,6 +62,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       progressPctText.textContent = `${scan.pct || 0}%`
       progressFill.style.width = `${scan.pct || 0}%`
       kpiStatus.textContent = 'Active'
+    } else if (scan.isFailed) {
+      kpiStatus.textContent = 'Stopped'
+      showAlert(scan.statusText, true)
     } else if (scan.isDone) {
       if (autoDlBanner) autoDlBanner.classList.remove('hidden')
       kpiStatus.textContent = 'Completed'
@@ -143,7 +146,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       abortBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg> Stop Live Export`
       progressContainer.classList.add('hidden')
 
-      if (msg.type === 'DUMP_FINISHED') {
+      if (msg.error) {
+        kpiStatus.textContent = 'Stopped'
+        if (autoDlBanner) autoDlBanner.classList.add('hidden')
+        if (msg.chunks) renderChunksTable(msg.chunks, msg.totalRows)
+        showAlert(msg.error, true)
+      } else if (msg.type === 'DUMP_FINISHED') {
         kpiStatus.textContent = 'Completed'
         if (autoDlBanner) autoDlBanner.classList.remove('hidden')
         if (msg.chunks) renderChunksTable(msg.chunks, msg.totalRows)
@@ -167,7 +175,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       let statusStyle = 'color: #D97706; font-weight: 600;'
       if (c.status.includes('Merged'))
         statusStyle = 'color: #10B981; font-weight: 700;'
-      else if (c.status.includes('Error') || c.status.includes('Failed'))
+      else if (c.status.includes('Error') || c.status.includes('Failed') || c.status === 'Stopped')
         statusStyle = 'color: #EF4444; font-weight: 700;'
 
       html += `

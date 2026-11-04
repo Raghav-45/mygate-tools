@@ -88,6 +88,53 @@ function sliceIntoYears(fromDateStr, toDateStr) {
   return chunks.reverse()
 }
 
+// A history row identifies a job; its URL alone does not. MyGate can reuse a
+// cloud file URL across jobs, and historical successes remain on this page.
+function reportIdentity(report) {
+  const filters = report.download_filters || {}
+  return JSON.stringify([report.report_name, report.download_request_time,
+    Object.keys(filters).sort().map(key => [key, Array.isArray(filters[key])
+      ? filters[key].map(v => String(v).trim()).sort() : filters[key]])])
+}
+
+function cloudFileKey(link) {
+  return String(link || '').split(/[?#]/)[0]
+}
+
+function matchesExportFilters(filters, from, to) {
+  const matchesDates = (keys, expected) => {
+    const values = keys.filter(key => filters[key] != null).map(key => filters[key])
+    return values.length > 0 && values.every(value => value === expected)
+  }
+  const statuses = Array.isArray(filters.Status) ? filters.Status.map(v => String(v).trim().toLowerCase()).sort() : []
+  return matchesDates(['From', 'Date From'], from) && matchesDates(['To', 'Date To'], to)
+    && JSON.stringify(statuses) === JSON.stringify(['new', 'reopened', 'in progress', 'job done', 'on hold'].sort())
+}
+
+function createdDateKey(value) {
+  let year, month, day
+  if (Object.prototype.toString.call(value) === '[object Date]') {
+    year = value.getUTCFullYear(); month = value.getUTCMonth() + 1; day = value.getUTCDate()
+  } else {
+    const text = String(value ?? '').trim()
+    let match = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:$|[T ,])/)
+    if (match) [, year, month, day] = match.map(Number)
+    else {
+      match = text.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4}|\d{2})(?:$|[ ,])/)
+      if (!match) return null
+      day = Number(match[1]); month = Number(match[2]); year = Number(match[3])
+      if (year < 100) year += 2000
+    }
+  }
+  const date = new Date(Date.UTC(year, month - 1, day))
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() + 1 !== month || date.getUTCDate() !== day) return null
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
+function categoryKey(value) {
+  return String(value).trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -103,7 +150,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 })
 
 async function runMasterDumpExport(params) {
-  const { fromDate, toDate, requestDelayMs = 2000 } = params
+  const { fromDate, toDate, requestDelayMs = 2000, expectedOpenByCategory } = params
 
   let tokenToUse = await discoverActiveAuthToken()
   if (!tokenToUse) tokenToUse = SAMPLE_FALLBACK_TOKEN
@@ -132,9 +179,36 @@ async function runMasterDumpExport(params) {
 
   const masterWb = new ExcelJS.Workbook()
   const masterWs = masterWb.addWorksheet('Master Dump')
-  let headerRowValues = null
   const allMergedRows = []
   const usedReportLinks = new Set()
+  const seenTicketIds = new Set()
+  const categoryCounts = new Map()
+  const fail = async (cr, message) => {
+    if (cr) cr.status = 'Stopped'
+    await chrome.storage.local.set({ dumpScanState: {
+      isScanning: false, isFailed: true, isDone: false, pct: 0,
+      statusText: `${message} No export retry was made.`, error: message,
+      chunks: chunkResults, totalRows: totalRowsMerged,
+    } })
+    chrome.runtime.sendMessage({ type: 'DUMP_FINISHED', error: message, chunks: chunkResults, totalRows: totalRowsMerged }).catch(() => {})
+  }
+  const pollPayload = {
+    operationName: 'getDownloadReportList',
+    variables: { requestData: {
+      requiredFields: ['report_link', 'report_name', 'status', 'download_request_time', 'download_filters'],
+      pagination: { count: 20, page: 1 }, sorting: [], conditions: [],
+    } },
+    query: 'query getDownloadReportList($requestData: DataListInput) { getDownloadReportList(requestData: $requestData) { dataResponse { data totalCount } message statusCode success } }',
+  }
+  const readReports = async () => {
+    const res = await fetch(URL_GRAPHQL, { method: 'POST', headers, cache: 'no-store', body: JSON.stringify(pollPayload) })
+    const data = await res.json()
+    const result = data?.data?.getDownloadReportList
+    if (!res.ok || data.errors || result?.success === false || !Array.isArray(result?.dataResponse?.data)) {
+      throw new Error('Could not read MyGate export history. Stopped before accepting a cloud file.')
+    }
+    return result.dataResponse.data
+  }
 
   // Process chunks strictly sequentially to prevent MyGate cloud job collisions
   for (let i = 0; i < chunks.length; i++) {
@@ -201,50 +275,53 @@ async function runMasterDumpExport(params) {
         'query getAdminSrList($requestData: DataListInput) {\n  getAdminSrList(requestData: $requestData) {\n    dataResponse {\n      data\n      filterType\n      totalCount\n      __typename\n    }\n    message\n    statusCode\n    success\n    __typename\n  }\n}\n',
     }
 
+    let baselineIds, baselineLinks, newestBaselineTime, expectedRows
     try {
-      const res = await fetch(URL_GRAPHQL, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(payload),
-      })
+      if (i > 0) await sleep(requestDelayMs)
+      const baseline = await readReports()
+      baselineIds = new Set(baseline.map(reportIdentity))
+      baselineLinks = new Set(baseline.filter(r => r.report_link).map(r => cloudFileKey(r.report_link)))
+      newestBaselineTime = Math.max(0, ...baseline.filter(r => r.report_name === 'Helpdesk Report')
+        .map(r => Date.parse(r.download_request_time)).filter(Number.isFinite))
+
+      // A read-only count verifies completeness. This never requests a cloud
+      // export. Exactly one isDownload:true request is allowed per chunk.
+      await sleep(requestDelayMs)
+      if (activeScanAbort) { await handleAbort(); return }
+      const countRequest = { ...payload.variables.requestData, isDownload: false,
+        requiredFields: ['id'], pagination: { count: 1, page: 1 } }
+      delete countRequest.downloadFilters
+      const countRes = await fetch(URL_GRAPHQL, { method: 'POST', headers, cache: 'no-store',
+        body: JSON.stringify({ ...payload, variables: { requestData: countRequest } }) })
+      const countData = await countRes.json()
+      const countResult = countData?.data?.getAdminSrList
+      const count = countResult?.dataResponse?.totalCount
+      expectedRows = Number(count)
+      if (!countRes.ok || countData.errors || countResult?.success === false || count == null
+          || count === '' || !Number.isSafeInteger(expectedRows) || expectedRows < 0) {
+        throw new Error('Could not verify the expected open-ticket count. Export was not requested.')
+      }
+      cr.expectedRows = expectedRows
+      if (activeScanAbort) { await handleAbort(); return }
+      await sleep(requestDelayMs)
+      if (activeScanAbort) { await handleAbort(); return }
+      const res = await fetch(URL_GRAPHQL, { method: 'POST', headers, body: JSON.stringify(payload) })
       const data = await res.json()
-      if (!res.ok || data.errors || !data?.data?.getAdminSrList) {
-        throw new Error('Session expired! Please open dashboard.mygate.com and log in.')
+      const result = data?.data?.getAdminSrList
+      if (!res.ok || data.errors || !result || result.success === false) {
+        throw new Error('MyGate rejected the export request. Check the dashboard session.')
       }
       cr.status = 'Generating in Cloud...'
       cr.rowsFound = 'Waiting for Cloud...'
       await updateState(basePct + 5, `Generating report for ${cr.rangeStr}...`, chunkResults, totalRowsMerged)
     } catch (e) {
-      console.error('Error requesting export:', e)
-      cr.rowsFound = 'Auth Error'
-      cr.status = 'Failed (Login Required)'
-      await updateState(0, 'Error: Please open dashboard.mygate.com and log in!', chunkResults, totalRowsMerged)
+      await fail(cr, e.message)
       return
     }
 
-    // Poll until this chunk report is ready
+    // Poll only the status of this one request; never resubmit an export.
     let chunkReady = false
     let pollAttempts = 0
-    const pollPayload = {
-      operationName: 'getDownloadReportList',
-      variables: {
-        requestData: {
-          requiredFields: [
-            'report_link',
-            'report_name',
-            'status',
-            'download_request_time',
-            'download_filters',
-          ],
-          pagination: { count: 20, page: 1 },
-          sorting: [],
-          conditions: [],
-        },
-      },
-      query:
-        'query getDownloadReportList($requestData: DataListInput) {\n  getDownloadReportList(requestData: $requestData) {\n    dataResponse {\n      data\n      filterType\n      totalCount\n      __typename\n    }\n    message\n    statusCode\n    success\n    __typename\n  }\n}\n',
-    }
-
     while (!chunkReady && pollAttempts < 45) {
       if (activeScanAbort) {
         await handleAbort()
@@ -252,93 +329,96 @@ async function runMasterDumpExport(params) {
       }
       pollAttempts++
       await sleep(requestDelayMs)
+      if (activeScanAbort) { await handleAbort(); return }
 
       try {
-        const pollRes = await fetch(URL_GRAPHQL, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(pollPayload),
-        })
-        const pollData = await pollRes.json()
-        const reports = pollData?.data?.getDownloadReportList?.dataResponse?.data || []
-
-        const match = reports.find((r) => {
-          if (r.report_name !== 'Helpdesk Report' || r.status !== 'Success' || !r.report_link || usedReportLinks.has(r.report_link))
-            return false
-          const df = r.download_filters || {}
-          const matchFrom = df['From'] === filterFrom || df['Date From'] === filterFrom
-          const matchTo = df['To'] === filterTo || df['Date To'] === filterTo
-          return matchFrom && matchTo
-        })
-
-        if (match && match.report_link) {
-          usedReportLinks.add(match.report_link)
+        const reports = await readReports()
+        const match = reports.find(r => r.report_name === 'Helpdesk Report' && r.status === 'Success'
+          && r.report_link && !baselineIds.has(reportIdentity(r))
+          && Number.isFinite(Date.parse(r.download_request_time))
+          && Date.parse(r.download_request_time) >= newestBaselineTime
+          && matchesExportFilters(r.download_filters || {}, filterFrom, filterTo))
+        if (match) {
+          const key = cloudFileKey(match.report_link)
+          if (baselineLinks.has(key) || usedReportLinks.has(key)
+              || reports.some(r => reportIdentity(r) !== reportIdentity(match) && cloudFileKey(r.report_link) === key)) {
+            throw new Error('MyGate reused a cloud file for different export requests. Dump stopped to prevent incorrect counts.')
+          }
+          usedReportLinks.add(key)
           cr.downloadUrl = match.report_link
           chunkReady = true
         }
       } catch (e) {
-        console.error('Polling error:', e)
+        await fail(cr, e.message)
+        return
       }
     }
 
     if (!cr.downloadUrl) {
-      cr.status = 'Timed out'
-      cr.rowsFound = '0'
-      continue
+      await fail(cr, 'The new MyGate export did not become ready in time. No partial dump was saved.')
+      return
     }
 
+    if (activeScanAbort) { await handleAbort(); return }
     cr.status = 'Downloading & Parsing...'
     await updateState(basePct + 15, `Merging ${cr.rangeStr}...`, chunkResults, totalRowsMerged)
 
     try {
-      const fileRes = await fetch(cr.downloadUrl)
+      const fileRes = await fetch(cr.downloadUrl, { cache: 'no-store' })
+      if (!fileRes.ok) throw new Error('Cloud file download failed. No partial dump was saved.')
       const arrayBuf = await fileRes.arrayBuffer()
       const chunkWb = new ExcelJS.Workbook()
       await chunkWb.xlsx.load(arrayBuf)
       const ws = chunkWb.worksheets[0]
 
-      if (!headerRowValues && ws.rowCount >= 3) {
-        headerRowValues = ws.getRow(3).values
+      if (!ws || ws.rowCount < 3) throw new Error('Cloud export has no valid ticket headers.')
+      const colMap = {}
+      ws.getRow(3).eachCell((cell, idx) => {
+        const name = cell.text.toLowerCase().trim()
+        if (['id', 'ticket id', 'i.d'].includes(name)) colMap.id = idx
+        else if (['created date', 'date'].includes(name)) colMap.createdDate = idx
+        else if (name === 'category') colMap.category = idx
+        else if (['sub category', 'subcategory'].includes(name)) colMap.subCategory = idx
+        else if (['flat', 'house'].includes(name)) colMap.flat = idx
+        else if (['subject', 'description'].includes(name)) colMap.subject = idx
+        else if (['status', 'mygate status'].includes(name)) colMap.status = idx
+      })
+      if (['id', 'createdDate', 'category', 'status'].some(key => !colMap[key])) {
+        throw new Error('Cloud export is missing required ticket columns.')
       }
-
-      let colMap = { id: 1, createdDate: 2, category: 4, subCategory: 5, flat: 7, subject: 9, status: 10 }
-      if (headerRowValues) {
-        headerRowValues.forEach((val, idx) => {
-          if (!val) return
-          const s = String(val).toLowerCase().trim()
-          if (s === 'id' || s === 'ticket id' || s === 'i.d') colMap.id = idx
-          else if (s === 'created date' || s === 'date') colMap.createdDate = idx
-          else if (s === 'category') colMap.category = idx
-          else if (s === 'sub category' || s === 'subcategory') colMap.subCategory = idx
-          else if (s === 'flat' || s === 'house') colMap.flat = idx
-          else if (s === 'subject' || s === 'description') colMap.subject = idx
-          else if (s === 'status' || s === 'mygate status') colMap.status = idx
-        })
-      }
-
-      let rowsInChunk = 0
+      const chunkRows = []
+      const chunkIds = new Set()
       for (let r = 4; r <= ws.rowCount; r++) {
-        const rVals = ws.getRow(r).values
-        if (rVals && rVals.length > 1 && rVals[colMap.id] !== undefined && rVals[colMap.id] !== '') {
-          const getVal = (idx) => {
-            let v = rVals[idx]
-            if (v && v instanceof Date) {
-              return new Date(Date.UTC(v.getFullYear(), v.getMonth(), v.getDate(), 12, 0, 0))
-            }
-            return v !== undefined && v !== null ? v : ''
-          }
-          allMergedRows.push({
-            id: getVal(colMap.id),
-            createdDate: getVal(colMap.createdDate),
-            category: getVal(colMap.category),
-            subCategory: getVal(colMap.subCategory),
-            flat: getVal(colMap.flat),
-            subject: getVal(colMap.subject),
-            status: getVal(colMap.status),
-          })
-          rowsInChunk++
+        const row = ws.getRow(r)
+        const id = row.getCell(colMap.id).text.trim()
+        if (!id) {
+          if (row.actualCellCount) throw new Error('Cloud export contains a row without a ticket ID.')
+          continue
         }
+        if (seenTicketIds.has(id) || chunkIds.has(id)) throw new Error('Duplicate ticket IDs found in the cloud export.')
+        const date = createdDateKey(row.getCell(colMap.createdDate).value)
+        if (!date || date < chunk.fromDate || date > chunk.toDate) {
+          throw new Error(`Cloud export contains a created date outside the requested date range (${cr.rangeStr}).`)
+        }
+        const status = row.getCell(colMap.status).text.trim().toLowerCase().replace(/[_\s]+/g, ' ')
+        if (!['new', 'open', 'reopened', 're opened', 'in progress', 'job done', 'on hold', 'hold'].includes(status)) {
+          throw new Error('Cloud export contains a ticket status outside the requested open statuses.')
+        }
+        const item = {}
+        for (const [name, col] of Object.entries(colMap)) item[name] = row.getCell(col).value ?? ''
+        chunkRows.push(item)
+        chunkIds.add(id)
       }
+      const rowsInChunk = chunkRows.length
+      if (rowsInChunk !== expectedRows) {
+        throw new Error(`Open-ticket count mismatch for ${cr.rangeStr}: expected ${expectedRows}, received ${rowsInChunk}. No partial dump was saved.`)
+      }
+      chunkRows.forEach(item => {
+        const key = categoryKey(item.category)
+        categoryCounts.set(key, (categoryCounts.get(key) || 0) + 1)
+      })
+      chunkIds.forEach(id => seenTicketIds.add(id))
+      allMergedRows.push(...chunkRows)
 
       cr.rowsFound = rowsInChunk.toLocaleString()
       cr.status = 'Merged ✅'
@@ -346,7 +426,17 @@ async function runMasterDumpExport(params) {
       await updateState(basePct + 25, `Merged ${rowsInChunk} rows from ${cr.rangeStr}`, chunkResults, totalRowsMerged)
     } catch (e) {
       console.error('Error downloading chunk:', e)
-      cr.status = 'Merge Error'
+      await fail(cr, e.message)
+      return
+    }
+  }
+
+  if (expectedOpenByCategory) {
+    const expected = new Map(expectedOpenByCategory.map(row => [categoryKey(row.category), Number(row.open)]))
+    const keys = new Set([...expected.keys(), ...categoryCounts.keys()])
+    if ([...keys].some(key => (expected.get(key) || 0) !== (categoryCounts.get(key) || 0))) {
+      await fail(null, 'Open-ticket counts differ between Pending Report and Master Dump. The data changed or MyGate returned a mismatched export; no dump or analysis was saved.')
+      return
     }
   }
 

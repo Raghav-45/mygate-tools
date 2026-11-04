@@ -83,10 +83,10 @@ async function runOriginal(slot, params, index, total) {
     await currentGenerator.run(params)
     checkAbort()
     if (failure || !scan.isDone || !captured?.base64) throw new Error(failure || scan.statusText || `${LABELS[slot]} did not finish.`)
-    // The original dump permits partial exports. Never label an incomplete
+    // Never label an incomplete
     // multi-year batch as a successful handoff or feed it into analysis.
     if (slot === 'dump' && scan.chunks.some(c => !String(c.status).startsWith('Merged'))) {
-      throw new Error('Some dump chunks timed out or could not be merged. Please generate again.')
+      throw new Error('Master Dump stopped because a cloud export could not be verified. No partial dump was saved.')
     }
     return { ...captured, scan }
   } finally { currentGenerator = null }
@@ -130,6 +130,9 @@ async function generate(cfg) {
       if (slot === 'summary') {
         const [year, month] = cfg.toDate.split('-').map(Number)
         params = { ...params, year, month }
+      }
+      if (slot === 'dump' && batch.counts) {
+        params.expectedOpenByCategory = batch.counts.rows.map(row => ({ category: row.name, open: row.open }))
       }
       if (slot === 'analysis') {
         const dump = batch.files.dump
