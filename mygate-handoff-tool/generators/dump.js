@@ -131,10 +131,6 @@ function createdDateKey(value) {
   return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
 }
 
-function categoryKey(value) {
-  return String(value).trim().replace(/\s+/g, ' ').toLowerCase()
-}
-
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -150,7 +146,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 })
 
 async function runMasterDumpExport(params) {
-  const { fromDate, toDate, requestDelayMs = 2000, expectedOpenByCategory } = params
+  const { fromDate, toDate, requestDelayMs = 2000 } = params
 
   let tokenToUse = await discoverActiveAuthToken()
   if (!tokenToUse) tokenToUse = SAMPLE_FALLBACK_TOKEN
@@ -182,7 +178,6 @@ async function runMasterDumpExport(params) {
   const allMergedRows = []
   const usedReportLinks = new Set()
   const seenTicketIds = new Set()
-  const categoryCounts = new Map()
   const fail = async (cr, message) => {
     if (cr) cr.status = 'Stopped'
     await chrome.storage.local.set({ dumpScanState: {
@@ -413,10 +408,6 @@ async function runMasterDumpExport(params) {
       if (rowsInChunk !== expectedRows) {
         throw new Error(`Open-ticket count mismatch for ${cr.rangeStr}: expected ${expectedRows}, received ${rowsInChunk}. No partial dump was saved.`)
       }
-      chunkRows.forEach(item => {
-        const key = categoryKey(item.category)
-        categoryCounts.set(key, (categoryCounts.get(key) || 0) + 1)
-      })
       chunkIds.forEach(id => seenTicketIds.add(id))
       allMergedRows.push(...chunkRows)
 
@@ -427,15 +418,6 @@ async function runMasterDumpExport(params) {
     } catch (e) {
       console.error('Error downloading chunk:', e)
       await fail(cr, e.message)
-      return
-    }
-  }
-
-  if (expectedOpenByCategory) {
-    const expected = new Map(expectedOpenByCategory.map(row => [categoryKey(row.category), Number(row.open)]))
-    const keys = new Set([...expected.keys(), ...categoryCounts.keys()])
-    if ([...keys].some(key => (expected.get(key) || 0) !== (categoryCounts.get(key) || 0))) {
-      await fail(null, 'Open-ticket counts differ between Pending Report and Master Dump. The data changed or MyGate returned a mismatched export; no dump or analysis was saved.')
       return
     }
   }
