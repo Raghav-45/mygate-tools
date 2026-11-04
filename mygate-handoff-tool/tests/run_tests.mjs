@@ -336,10 +336,16 @@ if (chromePath) {
     const sent = [];
     const cfg = ${JSON.stringify(params)};
     cfg.slots = ['report', 'dump', 'analysis'];
+    let releaseInitialSettings;
+    const initialSettingsPending = new Promise(resolve => { releaseInitialSettings = resolve; });
+    let initialSettingsReturned = false;
     const chrome = { runtime: {
       sendMessage: async msg => {
         sent.push(msg);
-        if (msg.type === 'HANDOFF_GET_STATE') await new Promise(r => setTimeout(r, 500));
+        if (msg.type === 'HANDOFF_GET_STATE' && !initialSettingsReturned) {
+          await initialSettingsPending;
+          initialSettingsReturned = true;
+        }
         return {ok:true,cfg,state:{phase:sent.some(m=>m.type==='HANDOFF_GENERATE')?'ready':'idle',generationReady:sent.some(m=>m.type==='HANDOFF_GENERATE'),files:[{slot:'report',status:'downloaded'}],log:[]}};
       }, onMessage:{addListener(){}}
     }};
@@ -347,13 +353,13 @@ if (chromePath) {
     function check(ok, text) { if (!ok) throw new Error(text); }
     function verify(fn) { try { fn(); } catch (e) { failure = e.message; } }
     window.addEventListener('load', () => {
-      setTimeout(() => verify(() => {
+      setTimeout(() => { verify(() => {
         check(document.getElementById('generateBtn').disabled, 'Generate unlocked before settings loaded');
         check(document.getElementById('draftBtn').disabled, 'Email unlocked before generation');
         for (const slot of ['report','dump','analysis','summary']) check(document.getElementById(slot+'Toggle').disabled, 'Selection editable before settings loaded');
         document.getElementById('generateBtn').click();
         check(!sent.some(m=>m.type==='HANDOFF_GENERATE'), 'Generation started while settings were pending');
-      }), 20);
+      }); releaseInitialSettings(); }, 20);
       setTimeout(() => verify(() => {
         const dump = document.getElementById('dumpToggle');
         check(!dump.disabled, 'Selection stayed locked after loading');
@@ -377,7 +383,10 @@ if (chromePath) {
       setTimeout(() => { document.body.dataset.testResult = failure || 'PASS'; }, 1500);
     });
   </script>`
-  const html = fs.readFileSync(path.join(dir, 'popup.html'), 'utf8').replace('<script src="release-features.js"></script>', stub + '<script src="release-features.js"></script>')
+  const html = fs.readFileSync(path.join(dir, 'popup.html'), 'utf8')
+    .replace(/<link\b[^>]*\bhref=["']https?:\/\/[^>]*>/gi, '')
+    .replace(/(<img\b[^>]*\bsrc=)["']https?:\/\/[^"']*["']/gi, '$1"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"')
+    .replace('<script src="release-features.js"></script>', stub + '<script src="release-features.js"></script>')
   fs.writeFileSync(path.join(preview, 'popup.html'), html)
   const browser = spawnSync(chromePath, ['--headless', '--no-sandbox', '--disable-gpu', '--no-first-run',
     `--user-data-dir=${path.join(preview, 'profile')}`, '--virtual-time-budget=2500', '--dump-dom', `file://${path.join(preview, 'popup.html')}`], { encoding: 'utf8', timeout: 30000, maxBuffer: 1024 * 1024 })

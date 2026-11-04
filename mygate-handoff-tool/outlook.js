@@ -44,9 +44,13 @@
     return r.width > 0 && r.height > 0
   }
 
-  function clickableElements() {
+  function isActionable(el) {
+    return !!el && !el.matches(':disabled') && !el.closest('[aria-disabled="true" i], [disabled], [inert]')
+  }
+
+  function clickableElements(root = document) {
     return Array.from(
-      document.querySelectorAll('button, [role="button"], a[href], [role="menuitem"], [role="option"], [data-automation-id]'),
+      root.querySelectorAll('button, [role="button"], a[href], [role="menuitem"], [role="option"], [data-automation-id]'),
     )
   }
 
@@ -73,11 +77,11 @@
   }
 
   // Integer-token label search on aria-label/title (no text noise).
-  function findByLabel(patterns, { dataIdRx } = {}) {
+  function findByLabel(patterns, { dataIdRx, root = document } = {}) {
     const rx = patterns.map((p) => new RegExp(p, 'i'))
     const rxData = dataIdRx ? new RegExp(dataIdRx, 'i') : null
-    for (const el of clickableElements()) {
-      if (!isVisible(el)) continue
+    for (const el of clickableElements(root)) {
+      if (!isVisible(el) || !isActionable(el)) continue
       const l = labelOf(el)
       if (l && rx.some((r) => r.test(l))) return el
       if (rxData) {
@@ -89,8 +93,8 @@
   }
 
   // Text-content CSS fallback when no aria label is present.
-  function findByVisibleText(words) {
-    const els = [...document.querySelectorAll('span,div,button')]
+  function findByVisibleText(words, root = document) {
+    const els = [...root.querySelectorAll('span,div,button')]
     for (const want of words) {
       const rx = new RegExp(want, 'i')
       for (const el of els) {
@@ -98,7 +102,7 @@
         const t = (el.textContent || '').trim()
         if (t && rx.test(t) && isVisible(el)) {
           const btn = el.closest('button, [role="button"]')
-          if (btn) return btn
+          if (btn && isVisible(btn) && isActionable(btn)) return btn
         }
       }
     }
@@ -115,7 +119,7 @@
   }
 
   function fullLabel(el) {
-    const parts = [labelOf(el), 'daid=' + (dataId(el) || '-'), 'text=' + truncate((el.textContent || '').trim(), 24)]
+    const parts = [labelOf(el), 'disabled=' + !isActionable(el), 'daid=' + (dataId(el) || '-'), 'text=' + truncate((el.textContent || '').trim(), 24)]
     return truncate(parts.join(' | ').replace(/\| - \| text= \|?/g, '').replace(/\| +\|/g, '|'), 90)
   }
 
@@ -132,7 +136,7 @@
       const btns = [...document.querySelectorAll('button, [role="button"]')].filter(isVisible)
       for (const b of btns) {
         const l = fullLabel(b)
-        if (/new|compose|mail.*message|message.*mail|send|attach/i.test(l)) lines.push('btn: ' + l)
+        if (/new|reply|compose|mail.*message|message.*mail|send|attach/i.test(l)) lines.push('btn: ' + l)
       }
       const subs = [...document.querySelectorAll('input, textarea')].filter((x) => isVisible(x)).slice(0, 20)
       for (const s of subs) {
@@ -496,7 +500,7 @@
       if (!expectedSubject || !heading) {
         return { ok: false, error: 'The open sent email does not match the report subject. Open the correct report and retry step 2.' }
       }
-      const button = findByLabel(['^reply all$', '^reply to all$']) || findByVisibleText(['^Reply all$', '^Reply to all$'])
+      const button = findByLabel(['^reply all$', '^reply to all$'], { root: pane }) || findByVisibleText(['^Reply all$', '^Reply to all$'], pane)
       if (!button) return { ok: false, error: 'Reply all is unavailable on the open report.', dump: diagnostics() }
       button.click()
       const ready = await until(() => bodyEditable() && recipientInput('to'), { tries: 40, delay: 250 })

@@ -17,6 +17,7 @@ if (!browser) {
     const template = fs.readFileSync(path.join(extension, 'email-template.js'), 'utf8')
     const fixture = `<!doctype html><meta charset="utf-8">
       <style>body{min-height:1400px}main{width:750px;height:650px}input{display:block}#editor{width:700px;height:250px}.attachment{width:500px;height:45px}</style>
+      <aside role="region" aria-label="Ribbon"><button id="disabled-reply-all" aria-label="Reply all" aria-disabled="true">Reply all</button></aside>
       <section role="main" aria-label="Reading Pane"><h3 id="report-subject">Mygate Complaint Summary.</h3>
         <button id="reply-all" aria-label="Reply all">Reply all</button><button id="new-mail">New mail</button>
         <div id="previous-message">Previous sent report and its attachments</div></section>
@@ -43,7 +44,8 @@ if (!browser) {
       const to = document.getElementById('to');
       const cc = document.getElementById('cc');
       const suggestion = document.getElementById('suggestion');
-      let replyClicks = 0, newMailClicks = 0;
+      let replyClicks = 0, newMailClicks = 0, disabledReplyClicks = 0;
+      document.getElementById('disabled-reply-all').onclick = () => {disabledReplyClicks++};
       document.getElementById('reply-all').onclick = () => {
         replyClicks++;
         document.getElementById('compose').hidden = false;
@@ -117,8 +119,13 @@ if (!browser) {
         result = await run('replyAll', replyPayload);
         check(!result.ok && newMailClicks === 0, 'Missing Reply all fell back to New mail');
         document.getElementById('reply-all').hidden = false;
+        // Exercise the global fallback too: some Outlook builds omit the pane's
+        // accessible label, but their aria-disabled ribbon buttons still exist.
+        document.querySelector('section[role="main"]').setAttribute('aria-label','Mail message');
         result = await run('replyAll', replyPayload);
         check(result.ok && !result.reused && replyClicks === 1, 'The open sent report did not open a reply-all draft');
+        check(disabledReplyClicks === 0, 'The disabled Outlook toolbar reply button was clicked');
+        document.querySelector('section[role="main"]').setAttribute('aria-label','Reading Pane');
         check(document.querySelector('[aria-label="Subject"]').value === 'Re: Mygate Complaint Summary.', 'The native reply subject changed');
         result = await run('replyAll', replyPayload);
         check(result.ok && result.reused && replyClicks === 1, 'Retry opened a second reply instead of reusing its own draft');
