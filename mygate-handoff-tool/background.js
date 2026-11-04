@@ -131,9 +131,6 @@ async function generate(cfg) {
         const [year, month] = cfg.toDate.split('-').map(Number)
         params = { ...params, year, month }
       }
-      if (slot === 'dump' && batch.counts) {
-        params.expectedOpenByCategory = batch.counts.rows.map(row => ({ category: row.name, open: row.open }))
-      }
       if (slot === 'analysis') {
         const dump = batch.files.dump
         if (!dump) throw new Error('Analysis needs a successfully generated dump from this run.')

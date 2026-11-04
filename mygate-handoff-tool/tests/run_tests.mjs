@@ -310,16 +310,18 @@ assert.equal(state.files.find(f => f.slot === 'analysis').status, 'failed')
 assert.equal(timeout.downloads.length, 2)
 console.log('PASS: incomplete dump blocks dependent analysis, while Report and Summary still download')
 
+// Counts come from separate snapshots and must not gate each other.
 const mismatchedCounts = harness()
 mismatchedCounts.control.reportOpen = 8
 state = await mismatchedCounts.run(1)
-assert.equal(state.phase, 'failed')
-assert.equal(state.generationReady, false)
-assert.equal(mismatchedCounts.store.handoffBatch, undefined)
-assert.deepEqual(mismatchedCounts.downloads.map(f => f.filename.split('_')[0]), ['Pending', 'Complaint Summary Sheet - Jan-2024.xlsx'])
-assert.match(state.log.map(log => log.msg).join(' '), /counts differ|count/i)
+assert.equal(state.phase, 'ready')
+assert.equal(state.generationReady, true)
+assert.equal(mismatchedCounts.downloads.length, 4)
+assert.equal(mismatchedCounts.store.handoffBatch.counts.summary.open, 56)
+assert.ok(mismatchedCounts.store.handoffBatch.files.dump)
+assert.ok(mismatchedCounts.store.handoffBatch.files.analysis)
 assert.equal(mismatchedCounts.network.filter(r => r.variables.requestData?.isDownload).length, 1)
-console.log('PASS: inconsistent report and dump counts block dump, analysis and email without another export')
+console.log('PASS: differences between Pending Report and Dump counts do not block downloads or email readiness')
 
 const interrupted = harness()
 interrupted.control.failDownload = true
@@ -483,8 +485,7 @@ async function run(options = {}) {
       return response({ getAdminSrList: { success: true, dataResponse: { totalCount: options.count ?? 1 } } })
     },
   })
-  await vm.runInContext(source + '\nrunMasterDumpExport(' + JSON.stringify({ fromDate: options.fromDate || '2026-01-01', toDate: '2026-11-04', requestDelayMs: 2000,
-    ...(options.expectedOpenByCategory ? { expectedOpenByCategory: options.expectedOpenByCategory } : {}) }) + ')', context)
+  await vm.runInContext(source + '\nrunMasterDumpExport(' + JSON.stringify({ fromDate: options.fromDate || '2026-01-01', toDate: '2026-11-04', requestDelayMs: 2000 }) + ')', context)
   return { state: store.dumpScanState, network, downloads, files, delays, exports: exportNumber }
 }
 
@@ -504,7 +505,6 @@ for (const [name, options, reason] of [
   ['missing rows', { count: 824 }, /count|expected/i],
   ['closed tickets', { bytes: await workbook([{ id: 1, date: '01-01-2026', status: 'Closed' }]) }, /status/i],
   ['unreadable date', { bytes: await workbook([{ id: 1, date: 'not a date' }]) }, /date/i],
-  ['category mismatch', { expectedOpenByCategory: [{ category: 'Accounts Billing', open: 2 }] }, /count|expected/i],
   ['expired file', { fileError: true }, /download/i],
   ['export rejected', { exportRejected: true }, /rejected|request/i],
   ['shared cloud URL', { sharedLink: true }, /reused|shared/i],
@@ -542,18 +542,13 @@ result = await run({ fromDate: '2024-01-01', bytesByYear: {
   2026: await workbook([{ id: 1, date: '04-11-26, 03:35 PM' }]),
   2025: await workbook([{ id: 2, date: '31-12-25, 03:35 PM' }], true),
   2024: await workbook([{ id: 3, date: '29-02-2024' }]),
-}, expectedOpenByCategory: [{ category: 'Accounts  Billing', open: 3 }] })
+} })
 assert.equal(result.state.isDone, true, result.state.statusText)
 assert.equal(result.exports, 3)
 assert.equal(result.files.length, 3)
 assert.equal(result.state.totalRows, 3)
 assert.equal(result.downloads.length, 1)
 console.log('PASS: three yearly exports merge once with unique IDs, leap day and per-file header mapping')
-result = await run({ count: 2, bytes: await workbook([{ id: 1, date: '01-01-2026' }, { id: 2, date: '02-01-2026', category: 'Design Related Issue' }]),
-  expectedOpenByCategory: [{ category: 'Accounts Billing', open: 2 }] })
-assert.equal(result.state.isFailed, true)
-assert.equal(result.downloads.length, 0)
-console.log('PASS: category mismatch is rejected even when grand totals agree')
 const dateContext = vm.createContext({ chrome: { runtime: { onMessage: { addListener() {} } } }, importScripts() {}, Date })
 vm.runInContext(source, dateContext)
 for (const [value, expected] of [['31-12-25, 03:35 PM', '2025-12-31'], ['29/02/2024', '2024-02-29'], ['2026-11-04T10:00:00Z', '2026-11-04'], ['31-02-2026', null]]) {
